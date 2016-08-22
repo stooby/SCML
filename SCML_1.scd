@@ -63,13 +63,6 @@ SynthDef.new(\MFCC, {
 	//array.poll(trig: 10, label: "MFCCs");
 }).add;
 
-/*SynthDef.new(\busSum, {
-	arg loudnessBus, rmsBus, outBus;
-	var loudness, rms;
-	loudness = In.kr(loudnessBus, 1);
-	rms = In.kr(rmsBus, 1);
-	Out.kr(outBus, [loudness, rms]);
-}).add;*/
 
 SynthDef.new(\busSum, {
 	arg loudnessBus, mfccBus, outBus;
@@ -101,57 +94,51 @@ i = Synth(\monAudioInput, [\outBus, ~bus_input1]);  //execute this to activate a
 //#3 =============
 //evaluate the below segments of code to monitor and transmit your preferred audio features)
 
-//LOUDNESS (perceptually-based volume measure) ------
+//LOUDNESS (perceptually-based VOLUME measure) ------
 l = Synth(\Loudness, [\input, ~bus_input1, \buffer, ~buf_Loudness, \outBus, ~bus_Loudness]).moveAfter(i); //create Loudness synth
 
-(//evaluate to start monitoring & transmitting Loudness values in sones
-~getLoudness = {
-	inf.do{
-		~bus_Loudness.get( {arg val; {
-			("Loudness: ").post;  val.round(0.0001).postln;
-			~oscPort_weki.sendMsg("/wek/inputs", val);
-		}.defer; } );
-		0.04.wait; // 25 frames per second
-	};
-}.fork;
-)
-~getLoudness.stop;
-///////////////////
+//RMS (volume) ------
+r = Synth(\RMS, [\input, ~bus_input1, \numSamp, 40, \outBus, ~bus_RMS]).moveAfter(i);
 
+//MFCC
 m = Synth(\MFCC, [\input, ~bus_input1, \buffer, ~buf_MFCC, \outBus, ~bus_MFCC]).moveAfter(i);
 
-//~featureSum = Synth.tail(s, \busSum, [\loudnessBus, ~bus_Loudness, \rmsBus, ~bus_RMS, \outBus, ~bus_sumOut]);
+//Pitch tracker
+p = Synth(\Pitch, [\input, ~bus_input1]).moveAfter(i);
+
+//sum all features into one control bus
 ~featureSum = Synth.tail(s, \busSum, [\loudnessBus, ~bus_Loudness, \mfccBus, ~bus_MFCC, \outBus, ~bus_sumOut]);
 ~featureSum.free;
 
-(
+(//begin transmitting features via OSC
 ~sendFeatures = {
 	inf.do{
 		~bus_sumOut.get( {arg val; {
 			~oscPort_weki.sendMsg("/wek/inputs", val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7], val[8], val[9], val[10], val[11], val[12], val[13]);
 			//~oscPort_weki.sendMsg("/wek/inputs", val.do({|item| item;}); );
-			("Sones:" + val[0].round(0.0001)).postln;
-			("MFCC:" + val[1..13].round(0.0001)).postln;
+			//("Sones:" + val[0].round(0.0001)).postln;
+			//("MFCC:" + val[1..13].round(0.0001)).postln;
 			//(" | RMS: ").post; val[1].round(0.00001).postln;
-			("-------").postln;
+			//("-------").postln;
 		}.defer; } );
-		0.4.wait;
+		0.04.wait;
 	};
 }.fork;
 )
-~sendFeatures.stop;
-
-~bus_sumOut.get( {arg val; val.postln; } );
-~bus_sumOut.get( {arg val; val[0..13].postln; } );
-(
-~bus_sumOut.get( {arg val;
-	val.do({|item| item.asCompileString;});
-	//val.asCompileString.postln;
-} );
-)
-
+~sendFeatures.stop; //stop transmitting features
 
 s.plotTree;
+
+
+//CLEANUP =============
+b.free;
+l.free;
+r.free;
+p.free;
+m.free;
+
+i.free;
+
 
 
 //%%%%%%%%%%%TESTING%%%%%%%%%%%%%%%%%%%%
@@ -174,29 +161,6 @@ s.plotTree;
 }.fork;
 )
 //%%%%%%%%%%%TESTING%%%%%%%%%%%%%%%%%%%%
-
-
-//RMS (volume) ------
-r = Synth(\RMS, [\input, ~bus_input1, \numSamp, 40, \outBus, ~bus_RMS]).moveAfter(i);
-
-(//evaluate to start monitoring & transmitting RMS values
-~getRMS = {
-	inf.do{
-		~bus_RMS.get( {arg val; {
-			("RMS: ").post;  val.round(0.0001).postln;
-		}.defer; } );
-		0.04.wait; // 25 frames per second
-	};
-}.fork;
-)
-~getRMS.stop;
-///////////////////
-
-p = Synth(\Pitch, [\input, ~bus_input1]).moveAfter(i);
-
-
-
-
 
 (  //run for MFCC graphic display
 var ms;
@@ -226,14 +190,3 @@ inf.do{
 )
 
 r.stop;
-
-//CLEANUP =============
-s.plotTree;
-
-b.free;
-l.free;
-r.free;
-p.free;
-m.free;
-
-i.free;
