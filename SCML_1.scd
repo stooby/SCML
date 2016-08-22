@@ -72,9 +72,22 @@ SynthDef.new(\specCent, {
 	arg input, outBus;
 	var sigIn, fft, centroid;
 	sigIn = In.ar(input);
-	fft = FFT(LocalBuf(1024), sigIn, wintype: 1);
+	fft = FFT(LocalBuf(2048), sigIn, wintype: 1);
 	centroid = SpecCentroid.kr(fft);
 	Out.kr(outBus, centroid);
+}).add;
+
+SynthDef.new(\specFlat, {
+	arg input, outBus;
+	var sigIn, fft, flatness, flatdb, flatdbScaled;
+	sigIn = In.ar(input);
+	fft = FFT(LocalBuf(2048), sigIn, wintype: 1);
+	flatness = SpecFlatness.kr(fft);  //consider normalizing more or rounding???
+
+	//flatdb = 10 * flat.log; //convert flatness to decibels
+	//flatdbScaled = LinLin.kr(flatdb, -45, -1.6, 0, 1).max(-10); // Rescale db roughly to 0...1
+
+	Out.kr(outBus, flatness);
 }).add;
 
 SynthDef.new(\busSum_loud_mfcc, {
@@ -98,6 +111,7 @@ SynthDef.new(\busSum_loud_mfcc, {
 ~bus_mfcc = Bus.control(s, 13);
 ~bus_pitch = Bus.control(s, 2);
 ~bus_specCent = Bus.control(s, 1);
+~bus_specFlat = Bus.control(s, 1);
 ~bus_sumOut = Bus.control(s, 14); //change the channel count to match the sum of the total # of feature outputs you're monitoring (e.g. loudness(1) + mfcc(13) = 14)
 )
 
@@ -123,7 +137,7 @@ m = Synth(\MFCC, [\input, ~bus_input1, \outBus, ~bus_mfcc]).moveAfter(i);
 //m = Synth(\MFCC, [\input, ~bus_input1, \buffer, ~buf_MFCC, \outBus, ~bus_mfcc]).moveAfter(i);
 m.free;
 
-//Pitch tracker
+//PITCH TRACKER
 p = Synth(\Pitch, [\input, ~bus_input1, \outBus, ~bus_pitch]).moveAfter(i);
 p.free;
 
@@ -141,7 +155,7 @@ p.free;
 )
 ~pitchFeatures.stop;
 
-//Spectral Centroid
+//SPECTRAL CENTROID
 c = Synth(\specCent, [\input, ~bus_input1, \outBus, ~bus_specCent]).moveAfter(i);
 c.free;
 
@@ -156,6 +170,23 @@ c.free;
 }.fork;
 )
 ~specCentFeatures.stop;
+
+//SPECTRAL FLATNESS
+f = Synth(\specFlat, [\input, ~bus_input1, \outBus, ~bus_specFlat]).moveAfter(i);
+f.free;
+
+(//testing output from spectral flatness synth
+~specFlatFeatures = {
+	inf.do{
+		~bus_specFlat.get( {arg val; {
+			("Flatness:" + val.round(0.00001)).postln;
+		}.defer; } );
+		0.08.wait;
+	};
+}.fork;
+)
+~specFlatFeatures.stop;
+
 //==============================================
 //sum all features into one control bus
 ~featureSum = Synth.tail(s, \busSum_loud_mfcc, [\loudnessBus, ~bus_loudness, \mfccBus, ~bus_mfcc, \outBus, ~bus_sumOut]);
@@ -186,6 +217,7 @@ r.free;
 m.free;
 p.free;
 c.free;
+f.free;
 i.free;
 
 
