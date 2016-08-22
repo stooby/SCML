@@ -68,6 +68,15 @@ SynthDef.new(\MFCC, {
 	//array.poll(trig: 10, label: "MFCCs");
 }).add;
 
+SynthDef.new(\specCent, {
+	arg input, outBus;
+	var sigIn, fft, centroid;
+	sigIn = In.ar(input);
+	fft = FFT(LocalBuf(1024), sigIn, wintype: 1);
+	centroid = SpecCentroid.kr(fft);
+	Out.kr(outBus, centroid);
+}).add;
+
 SynthDef.new(\busSum_loud_mfcc, {
 	arg loudnessBus, mfccBus, outBus;
 	var loudness, mfcc;
@@ -88,12 +97,13 @@ SynthDef.new(\busSum_loud_mfcc, {
 ~bus_rms = Bus.control(s, 1);
 ~bus_mfcc = Bus.control(s, 13);
 ~bus_pitch = Bus.control(s, 2);
+~bus_specCent = Bus.control(s, 1);
 ~bus_sumOut = Bus.control(s, 14); //change the channel count to match the sum of the total # of feature outputs you're monitoring (e.g. loudness(1) + mfcc(13) = 14)
 )
 
 // #2 =============
 i = Synth(\monAudioInput, [\outBus, ~bus_input1]);  //execute this to activate audio input to be analyzed
-
+i.free;
 //i = Synth(\monAudioInFFT, [\buffer, b, \outBus, ~bus_input1]); //experimental...
 
 //#3 =============
@@ -101,17 +111,22 @@ i = Synth(\monAudioInput, [\outBus, ~bus_input1]);  //execute this to activate a
 
 //LOUDNESS (volume - perceptual measure in Sones) ------
 l = Synth(\Loudness, [\input, ~bus_input1, \outBus, ~bus_loudness]).moveAfter(i);
+l.free;
 //l = Synth(\Loudness, [\input, ~bus_input1, \buffer, ~buf_Loudness, \outBus, ~bus_loudness]).moveAfter(i); //create Loudness synth
 
 //RMS (volume) ------
 r = Synth(\RMS, [\input, ~bus_input1, \numSamp, 40, \outBus, ~bus_rms]).moveAfter(i);
+r.free;
 
 //MFCC
 m = Synth(\MFCC, [\input, ~bus_input1, \outBus, ~bus_mfcc]).moveAfter(i);
 //m = Synth(\MFCC, [\input, ~bus_input1, \buffer, ~buf_MFCC, \outBus, ~bus_mfcc]).moveAfter(i);
+m.free;
 
 //Pitch tracker
 p = Synth(\Pitch, [\input, ~bus_input1, \outBus, ~bus_pitch]).moveAfter(i);
+p.free;
+
 (//testing output from pitch bus
 ~pitchFeatures = {
 	inf.do{
@@ -126,6 +141,21 @@ p = Synth(\Pitch, [\input, ~bus_input1, \outBus, ~bus_pitch]).moveAfter(i);
 )
 ~pitchFeatures.stop;
 
+//Spectral Centroid
+c = Synth(\specCent, [\input, ~bus_input1, \outBus, ~bus_specCent]).moveAfter(i);
+c.free;
+
+(//testing output from spectral centroid synth
+~specCentFeatures = {
+	inf.do{
+		~bus_specCent.get( {arg val; {
+			("Centroid:" + val.round(0.01)).postln;
+		}.defer; } );
+		0.08.wait;
+	};
+}.fork;
+)
+~specCentFeatures.stop;
 //==============================================
 //sum all features into one control bus
 ~featureSum = Synth.tail(s, \busSum_loud_mfcc, [\loudnessBus, ~bus_loudness, \mfccBus, ~bus_mfcc, \outBus, ~bus_sumOut]);
@@ -135,7 +165,7 @@ p = Synth(\Pitch, [\input, ~bus_input1, \outBus, ~bus_pitch]).moveAfter(i);
 ~sendFeatures = {
 	inf.do{
 		~bus_sumOut.get( {arg val; {
-			~oscPort_weki.sendMsg("/wek/inputs", val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7], val[8], val[9], val[10], val[11], val[12], val[13]);
+			~oscPort_weki.sendMsg("/wek/inputs", val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7], val[8], val[9], val[10], val[11], val[12], val[13]); //sending loudness and MFCC bus out
 			//~oscPort_weki.sendMsg("/wek/inputs", val.do({|item| item;}); );
 			//("Sones:" + val[0].round(0.0001)).postln;
 			//("MFCC:" + val[1..13].round(0.0001)).postln;
@@ -150,14 +180,12 @@ p = Synth(\Pitch, [\input, ~bus_input1, \outBus, ~bus_pitch]).moveAfter(i);
 
 s.plotTree;
 
-
 //CLEANUP =============
-b.free;
 l.free;
 r.free;
-p.free;
 m.free;
-
+p.free;
+c.free;
 i.free;
 
 
