@@ -90,6 +90,17 @@ SynthDef.new(\specFlat, {
 	Out.kr(outBus, flatness);
 }).add;
 
+SynthDef.new(\onsets, {
+	arg input, outBus, threshold = 0.5, trigtime = 0.1, odtype = \rcomplex, reltime = 1.0, floor = 0.1;
+	var sigIn, fft, onsets, trigger;
+	sigIn = In.ar(input);
+	fft = FFT(LocalBuf(512), sigIn, wintype: 1);
+	onsets = Onsets.kr(fft, threshold, odtype, reltime, floor);
+	trigger = EnvGen.kr(Env([1, 1, 0], [0, trigtime], curve: \hold), onsets); //after onset is detected, send trigger value of '1'  for 'trigtime' seconds to control bus
+	//trigger.poll(10, label: 'trig'); //uncomment this to monitor trigger val constantly
+	Out.kr(outBus, trigger);
+}).add;
+
 SynthDef.new(\busSum_loud_mfcc, {
 	arg loudnessBus, mfccBus, outBus;
 	var loudness, mfcc;
@@ -112,6 +123,7 @@ SynthDef.new(\busSum_loud_mfcc, {
 ~bus_pitch = Bus.control(s, 2);
 ~bus_specCent = Bus.control(s, 1);
 ~bus_specFlat = Bus.control(s, 1);
+~bus_onsets = Bus.control(s, 1);
 ~bus_sumOut = Bus.control(s, 14); //change the channel count to match the sum of the total # of feature outputs you're monitoring (e.g. loudness(1) + mfcc(13) = 14)
 )
 
@@ -187,6 +199,28 @@ f.free;
 )
 ~specFlatFeatures.stop;
 
+
+//ONSETS
+o = Synth(\onsets, [\input, ~bus_input1, \outBus, ~bus_onsets, \threshold, 0.7]).moveAfter(i);
+o.free;
+
+o.set(\threshold, 0.5); //evaluate to change detection threshold (between 0 - 1)
+
+(//simple output test for onsets synth
+~onsetFeatures = {
+	inf.do{
+		~bus_onsets.get( {arg val; {
+			if (val == 1, {
+				var currentSec = thisThread.seconds.round(0.01);
+				("ONSET DETECTED: " + currentSec).postln;
+			} );
+		}.defer;} );
+		0.1.wait;
+	};
+}.fork;
+)
+~onsetFeatures.stop;
+
 //==============================================
 //sum all features into one control bus
 ~featureSum = Synth.tail(s, \busSum_loud_mfcc, [\loudnessBus, ~bus_loudness, \mfccBus, ~bus_mfcc, \outBus, ~bus_sumOut]);
@@ -195,12 +229,12 @@ f.free;
 (//begin transmitting features via OSC
 ~sendFeatures = {
 	inf.do{
-		~bus_sumOut.get( {arg val; {
-			~oscPort_weki.sendMsg("/wek/inputs", val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7], val[8], val[9], val[10], val[11], val[12], val[13]); //sending loudness and MFCC bus out
-			//~oscPort_weki.sendMsg("/wek/inputs", val.do({|item| item;}); );
+
+		~bus_sumOut.get( {arg val; { //get current feature vals in this bus and output via OSC
+			~oscPort_weki.sendMsg(*["/wek/inputs"] ++ val);
 			//("Sones:" + val[0].round(0.0001)).postln;
 			//("MFCC:" + val[1..13].round(0.0001)).postln;
-			//(" | RMS: ").post; val[1].round(0.00001).postln;
+			//("RMS:" + val[1].round(0.00001)).postln;
 			//("-------").postln;
 		}.defer; } );
 		0.04.wait;
