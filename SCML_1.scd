@@ -1,11 +1,8 @@
 s = Server.local;
 s.options.sampleRate = 44100;
-s.latency = 0.05; //evaluate this line if you want to adjust latency... 0.2 is SC default
-
-s.plotTree;
-
+//s.latency = 0.05; //uncomment and evaluate this line if you want to adjust latency... 0.2 is SC default
+s.boot;
 ~oscPort_weki = NetAddr("127.0.0.1", 6448); //configure connection to default Wekinator input port
-
 ~oscPort_sc = NetAddr("127.0.0.1", 57120); // sclang default input port
 
 ( //#1 =============
@@ -101,20 +98,32 @@ SynthDef.new(\onsets, {
 	Out.kr(outBus, trigger);
 }).add;
 
-SynthDef.new(\busSum_loud_mfcc, {
+SynthDef.new(\busSum_loud_mfcc, { //convenience def to concat loudness & mfcc bus vals
 	arg loudnessBus, mfccBus, outBus;
 	var loudness, mfcc;
 	loudness = In.kr(loudnessBus);
 	mfcc = In.kr(mfccBus, 13);
 	Out.kr(outBus, [loudness, mfcc[0], mfcc[1], mfcc[2], mfcc[3], mfcc[4], mfcc[5], mfcc[6], mfcc[7], mfcc[8], mfcc[9], mfcc[10], mfcc[11], mfcc[12]]);
 }).add;
-//BUFFERS AND BUSSES-----------
 
-// assumes hop of half fftsize, fine.....not necessary if using LocalBuf
-//b = Buffer.alloc(s, 1024, 1); // for sampling rates 44100 and 48000
-//b = Buffer.alloc(s, 2048, 1); // for sampling rates 88200 and 96000
-//~buf_Loudness = Buffer.alloc(s, 1024, 1); //not necessary if using LocalBuf
-//~buf_MFCC = Buffer.alloc(s, 1024, 1); //not necessary if using LocalBuf
+SynthDef.new(\busSum_loud_sFlat_sCent, { //convenience def to concat loudness, flatness, and centroid bus vals
+	arg loudnessBus, flatnessBus, centroidBus, outBus;
+	var loudness, centroid, flatness;
+	loudness = In.kr(loudnessBus);
+	flatness = In.kr(flatnessBus);
+	centroid = In.kr(centroidBus);
+	Out.kr(outBus, [loudness, flatness, centroid]);
+}).add;
+
+SynthDef.new(\busSum_loud_pitch, { //convenience def to concat loudness & pitch bus vals
+	arg loudnessBus, pitchBus, outBus;
+	var loudness, pitch;
+	loudness = In.kr(loudnessBus);
+	pitch = In.kr(pitchBus, 2);
+	Out.kr(outBus, [loudness, pitch[0], pitch[1]]); //pitch[0] = last detected freq value, pitch[1] = 0 or 1 value indicating whether or not a pitch has been detected
+}).add;
+
+//BUFFERS AND BUSSES-----------
 
 ~bus_input1 = Bus.audio(s, 1);
 ~bus_loudness = Bus.control(s, 1);
@@ -124,7 +133,76 @@ SynthDef.new(\busSum_loud_mfcc, {
 ~bus_specCent = Bus.control(s, 1);
 ~bus_specFlat = Bus.control(s, 1);
 ~bus_onsets = Bus.control(s, 1);
-~bus_sumOut = Bus.control(s, 14); //change the channel count to match the sum of the total # of feature outputs you're monitoring (e.g. loudness(1) + mfcc(13) = 14)
+
+//   can get rid of vvvvvvvvvvvvvv
+~busSum_ldns_mfcc = Bus.control(s, 14); //14 channel bus - 1 channel/feature (e.g. loudness(1) + mfcc(13) = 14)
+~busSum_ldns_sFlat_sCent = Bus.control(s, 3);
+~busSum_ldns_pitch = Bus.control(s, 3); //1 feature/chan = loudness(1) + freq(1) + hasFreq(1)
+//   can get rid of ^^^^^^^^^^^^
+
+//FUNCS------------------------
+~sumFunc_xin = {arg busArray;
+	var numCh = 0, busCol, outArray, outBus;
+	busArray.do({|item| numCh = numCh + item.numChannels}); //calculate total # bus channels
+	outBus = Bus.control(s, numCh);
+	busCol = Array.newClear(busArray.size);
+
+	~sumSyn_xin = SynthDef(\sumSyn_2in, {
+		busArray.do({|item, i| busCol[i] = In.kr(item, item.numChannels); }); //input bus vals to var array
+		busCol.do({|item| //concat all bus vals into single out array
+			if (item.numChannels == 1,
+				{outArray = outArray ++ [item]},
+				{outArray = outArray ++ (item.numChannels.collect( {|i| item[i]} ))}
+			);
+		});
+		Out.kr(outBus, outArray);
+	}).play(addAction: \addToTail);
+
+	outBus;
+};
+
+~getSend_busSum = {arg bus, netAdr, oscMsg;
+	var numCh = bus.numChannels;
+	bus.get( {arg val; {
+		netAdr.sendMsg(*[oscMsg] ++ val); //transmit feature vals via OSC
+		switch (bus, //monitor feature values in SC (can be commented out to reduce CPU)
+			~busSum_ldns_mfcc, {
+				("Loudness:" + val[0].round(0.0001)).postln;
+				("MFCC:" + val[1..13].round(0.0001)).postln;
+				("-------").postln;
+			},
+			~busSum_ldns_sFlat_sCent, {
+				("Loudness:" + val[0].round(0.0001)).postln;
+				("Flatness:" + val[1].round(0.0001)).postln;
+				("Centroid:" + val[2].round(0.0001)).postln;
+				("-------").postln;
+			},
+			~busSum_ldns_pitch, {
+				("Loudness:" + val[0].round(0.0001)).postln;
+				("Pitch-freq:" + val[1].round(0.01)).postln;
+				("Pitch-hasFreq?:" + val[2]).postln;
+				("-------").postln;
+			},
+			{//all other busses (cases)
+				if (numCh > 1,
+					{
+						numCh.do({arg item; ("Feature_" ++ (item + 1) ++ ":" + val[item].round(0.0001)).postln;});
+						("-------").postln;
+					},
+					{("Feature_1:" + val.round(0.0001)).postln;} //else
+				);
+			}
+		);
+	}.defer; } );
+};
+
+~streamFeatures = {
+	arg bus, netAdr, oscMsg, rate = 0.04;
+	Routine ( {
+		~getSend_busSum.value(bus, netAdr, oscMsg);
+		rate.yieldAndReset;
+	} );
+};
 )
 
 // #2 =============
@@ -132,13 +210,11 @@ i = Synth(\monAudioInput, [\outBus, ~bus_input1]);  //execute this to activate a
 i.free;
 //i = Synth(\monAudioInFFT, [\buffer, b, \outBus, ~bus_input1]); //experimental...
 
-//#3 =============
-//evaluate the below segments of code to monitor and transmit your preferred audio features
+//#3 =============  Evaluate individual code lines below to monitor features
 
 //LOUDNESS (volume - perceptual measure in Sones) ------
 l = Synth(\Loudness, [\input, ~bus_input1, \outBus, ~bus_loudness]).moveAfter(i);
 l.free;
-//l = Synth(\Loudness, [\input, ~bus_input1, \buffer, ~buf_Loudness, \outBus, ~bus_loudness]).moveAfter(i); //create Loudness synth
 
 //RMS (volume) ------
 r = Synth(\RMS, [\input, ~bus_input1, \numSamp, 40, \outBus, ~bus_rms]).moveAfter(i);
@@ -146,7 +222,6 @@ r.free;
 
 //MFCC
 m = Synth(\MFCC, [\input, ~bus_input1, \outBus, ~bus_mfcc]).moveAfter(i);
-//m = Synth(\MFCC, [\input, ~bus_input1, \buffer, ~buf_MFCC, \outBus, ~bus_mfcc]).moveAfter(i);
 m.free;
 
 //PITCH TRACKER
@@ -199,7 +274,6 @@ f.free;
 )
 ~specFlatFeatures.stop;
 
-
 //ONSETS
 o = Synth(\onsets, [\input, ~bus_input1, \outBus, ~bus_onsets, \threshold, 0.7]).moveAfter(i);
 o.free;
@@ -223,27 +297,101 @@ o.set(\threshold, 0.5); //evaluate to change detection threshold (between 0 - 1)
 
 //==============================================
 //sum all features into one control bus
-~featureSum = Synth.tail(s, \busSum_loud_mfcc, [\loudnessBus, ~bus_loudness, \mfccBus, ~bus_mfcc, \outBus, ~bus_sumOut]);
-~featureSum.free;
+(//TRANSMIT LOUDNESS AND MFCCs
+~featureSum_1 = Synth.tail(s, \busSum_loud_mfcc, [\loudnessBus, ~bus_loudness, \mfccBus, ~bus_mfcc, \outBus, ~busSum_ldns_mfcc]); //14 feature output (loudness + 13 mfcc)
+~transmit = ~streamFeatures.value(~busSum_ldns_mfcc, ~oscPort_weki, "/wek/inputs", 0.04);
+~transmit.play;
+)
+( //stop transmitting
+~transmit.stop;
+//~transmit.reset;
+~featureSum_1.free;
+)
 
+
+(
+~featureSum_2 = Synth.tail(s, \busSum_loud_sFlat_sCent, [\loudnessBus, ~bus_loudness, \flatnessBus, ~bus_specFlat, \centroidBus, ~bus_specCent, \outBus, ~busSum_ldns_sFlat_sCent]);
+~transmit = ~streamFeatures.value(~busSum_ldns_sFlat_sCent, ~oscPort_weki, "/wek/inputs", 0.04);
+~transmit.play;
+)
+( //stop transmitting
+~transmit.stop;
+//~transmit.reset;
+~featureSum_2.free;
+)
+
+(
+~featureSum_3 = Synth.tail(s, \busSum_loud_pitch, [\loudnessBus, ~bus_loudness, \pitchBus, ~bus_pitch, \outBus, ~busSum_ldns_pitch]);
+~transmit = ~streamFeatures.value(~busSum_ldns_pitch, ~oscPort_weki, "/wek/inputs", 0.04);
+~transmit.play;
+)
+( //stop transmitting
+~transmit.stop;
+//~transmit.reset;
+~featureSum_3.free;
+)
+
+/////////////////   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!   /////////////////
+s.plotTree;
+//~featureSum_4 = Synth.tail(s, \busSum_2in, [\bus1, ~bus_loudness, \bus2, ~bus_specFlat, \outBus, ~busSum_2feats]);
+
+~busSum_xin = ~sumFunc_xin.value([~bus_loudness, ~bus_mfcc]);
+~transmit = ~streamFeatures.value(~busSum_xin, ~oscPort_weki, "/wek/inputs", 0.04);
+~transmit.play;
+~transmit.stop;
+~sumSyn_xin.free;
+~busSum_xin.free;
+
+~busSum_2in = ~sumFunc_2in.value(~bus_mfcc, ~bus_pitch); //triggers ~concatBus_2in synthDef
+//~busSum_2in.get({arg val; {val.postln;}.defer; });
+~transmit = ~streamFeatures.value(~busSum_2in, ~oscPort_weki, "/wek/inputs", 0.5);
+~transmit.play;
+~transmit.stop;
+~sumSyn_2in.free;
+~busSum_2in.free;
+
+
+~sumFunc_3in.value(~bus_pitch, ~bus_loudness, ~bus_mfcc); //triggers ~concatBus_2in synthDef
+//~busSum_2in.get({arg val; {val.postln;}.defer; });
+~transmit = ~streamFeatures.value(~busSum_3in, ~oscPort_weki, "/wek/inputs", 0.5);
+~transmit.play;
+~transmit.stop;
+~sumSyn_3in.free;
+
+/*
+~featureSum_5 = Synth.tail(s, \busSum_3in, [\bus1, ~bus_loudness, \bus2, ~bus_specFlat, \bus3, ~bus_onsets, \outBus, ~busSum_3feats]);
+
+~featureSum_5.free;
+
+~featureSum_6 = Synth.tail(s, \busSum_4in, [\bus1, ~bus_loudness, \bus2, ~bus_specFlat, \bus3, ~bus_pitch, \bus4, ~bus_specCent, \outBus, ~busSum_xFeats]);
+
+~featureSum_6.free; */
+
+~transmit = ~streamFeatures.value(~busSum_3feats, ~oscPort_weki, "/wek/inputs", 0.5);
+~transmit.play;
+~transmit.stop;
+~transmit.reset;
+
+s.plotTree;
+/*
 (//begin transmitting features via OSC
 ~sendFeatures = {
 	inf.do{
-
 		~bus_sumOut.get( {arg val; { //get current feature vals in this bus and output via OSC
 			~oscPort_weki.sendMsg(*["/wek/inputs"] ++ val);
-			//("Sones:" + val[0].round(0.0001)).postln;
-			//("MFCC:" + val[1..13].round(0.0001)).postln;
+			("Sones:" + val[0].round(0.0001)).postln;
+			("MFCC:" + val[1..13].round(0.0001)).postln;
 			//("RMS:" + val[1].round(0.00001)).postln;
-			//("-------").postln;
+			//("Pitch:" + val[1].round(0.0001)).postln;
+			//("Centroid:" + val[2].round(0.0001)).postln;
+			("-------").postln;
 		}.defer; } );
 		0.04.wait;
 	};
 }.fork;
 )
 ~sendFeatures.stop; //stop transmitting features
-
-s.plotTree;
+*/
 
 //CLEANUP =============
 l.free;
