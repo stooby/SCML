@@ -10,7 +10,8 @@
 o = Server.local.options;
 o.sampleRate = 44100;
 o.blockSize = 64;
-o.device = nil; //use system default soundcard
+//ServerOptions.inDevices; //view available audio input devices
+o.inDevice = nil; //use system default audio input, change the value to match your desired audio input
 //s.latency = 0.05; //uncomment and evaluate this line if you want to adjust latency... 0.2 is SC default
 s.boot;
 )
