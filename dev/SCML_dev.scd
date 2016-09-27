@@ -72,8 +72,11 @@ o.blockSize;
 ~bus_vocAmp = Bus.control(s, 1); //voc proc synth sum level bus
 ~bus_wislAmp = Bus.control(s, 1); //whistle proc synth sum level bus
 ~bus_vocwislMix = Bus.control(s, 1); //mix balance between vocal FX synths and whistle FX synths
+~bus_accompAmp = Bus.control(s, 1); //level of summed, mixed accomp synths
+~bus_verbMix = Bus.control(s, 1);
+~bus_verbRoom = Bus.control(s, 1);
 
-~bus_vocSynthSumOut = Bus.audio(s, 2); //yea? to make it easier to process groups of synths?
+~bus_vocSynthSum = Bus.audio(s, 2); //yea? to make it easier to process groups of synths?
 ~bus_wislSynthSum = Bus.audio(s, 2); //yea?
 
 ~bus_vocSynthSub = Bus.audio(s, 2); //NOT NEEDED? if not using subMix synths...
@@ -85,8 +88,9 @@ o.blockSize;
 ~bus_wislAmp.set(1.0); //make these static values b/c using SelectX's to control mix levels?
 ~bus_vocwislMix.set(0.0); //0 = voc accomp only, 1 = whistle accomp only. Set via control routine
 ~bus_accompAmp.set(0.7); //if using this method, set ~bus_vocAmp and ~bus_wislAmp to (1.0)
+~bus_verbMix.set(0.25);
+~bus_verbRoom.set(0.15);
 
-~dryIn1_mix = Synth(\subMix, [\inBus, ~bus_input1, \amp, ~bus_dryIn1Amp.asMap, \outBus, ~bus_outMain]); //bus for adjusting level of raw input and sending to main out
 
 ~vocSynthSum_mix = Synth(\subMix, [\inBus, ~bus_vocSynthSum, \amp, ~bus_vocAmp.asMap, \outBus, ~bus_outMain/*or just 0???*/]); //voc accomp sum mix synth. NOT NEEDED IF: controlling subSynth levels w/ ~bus_vocAmp and outputting to ~bus_vocSynthSum, OTHERWISE - create additional bus to output to from this synth to use as input bus for ~accomp_mix XFADE synth
 
@@ -95,15 +99,55 @@ o.blockSize;
 ~masterOut = Synth(\subMix, [in: ~bus_outMain, out: 0]); //NEEDED?
 
 
-~accomp_mix = Synth(\XFade, [\in1, ~bus_vocSynthSum, \in2, ~bus_wislSynthSum, \out, ~bus_outMain /*or 0, or [0, 1]?*/, \amountControlBus, ~bus_vocwislMix, \amp, ~bus_accompAmp]); //harmonizer synth selector, ~bus_vocwislMix controls whether voc or whistle harmonizers are heard
+//----------Synth Instantiation-----------
+s.plotTree;
+~dryIn1 = Synth(\mono2stereo, [\in, ~bus_input1, \amp, ~bus_dryIn1Amp.asMap, \out, 0]).moveAfter(i); //pipe dry mono input to stereo output
+~dryIn1.set(\pan, 0);
 
-~wisA1 = ~wekiSyn_wisl1.value(oscInBus: ~bus_oscIn_1, audioIn: ~bus_input1, audioOut: ~bus_wislSynthSum, scaleBuf: ~scaleBuf, amp: ~bus_wislAmp); //whistle harmonizer 1
+~scale1 = Scale.majorPentatonic.degrees; //[0, 2, 4, 7, 9]
+~scaleBuf = Buffer.alloc(s, ~scale1.size, 1, {|b| b.setnMsg(0, ~scale1) } );
 
-~vocA1 = ~wekiSyn_voc1.value(oscInBus: ~bus_oscIn_1, audioIn: ~bus_input1, audioOut: ~bus_vocSynthSum, interval: 5.0, pan: 0.25, amp: ~bus_vocAmp); //voc harmonizer 1
+~wisA1 = ~wekiSyn_wisl1.value(oscInBus: ~bus_oscIn_1, audioIn: ~bus_input1, audioOut: ~bus_wislSynthSum, scaleBuf: ~scaleBuf, amp: ~bus_wislAmp.asMap); //whistle harmonizer 1
+~wisA1.moveAfter(~dryIn1); //necessary to ensure proper nodeTree order?
 
-~vocA2 = ~wekiSyn_voc1.value(oscInBus: ~bus_oscIn_1, audioIn: ~bus_input1, audioOut: ~bus_vocSynthSum, interval: -2.0, pan: -0.25, amp: ~bus_vocAmp); //voc harmonizer 2
+~vocA1 = ~wekiSyn_voc1.value(oscInBus: ~bus_oscIn_1, audioIn: ~bus_input1, audioOut: ~bus_vocSynthSum, interval: 5.0, pan: 0.25, amp: ~bus_vocAmp.asMap); //voc harmonizer 1
+~vocA1.moveAfter(~dryIn1); //necessary to ensure proper nodeTree order?
 
-//NEW AUTOHARMONIZE SYNTH DEFS ------ vvvvvvvvvvvvvvvvvvv ----------
+
+~vocA2 = ~wekiSyn_voc1.value(oscInBus: ~bus_oscIn_1, audioIn: ~bus_input1, audioOut: ~bus_vocSynthSum, interval: -2.0, pan: -0.25, amp: ~bus_vocAmp.asMap); //voc harmonizer 2
+~vocA2.moveAfter(~dryIn1); //necessary to ensure proper nodeTree order?
+
+~vocA2.set(\pan, -0.5);
+~vocA1.set(\pan, 0.5);
+~bus_vocwislMix.set(0.0);
+
+~accomp_mix = Synth(\XFadeStereo, [\in1, ~bus_vocSynthSum, \in2, ~bus_wislSynthSum, \out, 0, \amountControlBus, ~bus_vocwislMix.asMap, \amp, ~bus_accompAmp.asMap], addAction: \addToTail);
+
+~fx_reverb = Synth(\reverb2x2, [\outBus, 0, \mix, ~bus_verbMix.asMap, \room, ~bus_verbRoom.asMap], addAction: \addToTail); //stereo reverb processing sum output
+
+~bus_verbMix.set(0.5);
+~bus_verbRoom.set(0.7);
+~fx_reverb.set(\damp, 0.1);
+//----------------------------------------------
+
+//NEW SYNTH DEFS ------ vvvvvvvvvvvvvvvvvvv ----------
+SynthDef.new(\mono2stereo, { //pass mono input to stereo output
+	|in, amp = 1, pan = 0.0, out|
+	var sig;
+	sig = In.ar(in) * amp;
+	//sig = InFeedback.ar(in) * amp;
+	sig = Pan2.ar(sig, pan);
+	//OffsetOut.ar(out, sig);
+	Out.ar(out, sig);
+} ).add;
+
+SynthDef.new(\reverb2x2, {|outBus, mix = 0.25, room = 0.15, damp = 0.2, amp = 1.0|
+	var sigIn, sigOut;
+	sigIn = In.ar(outBus, 2);
+	sigOut = FreeVerb2.ar(sigIn[0], sigIn[1], mix, room, damp, amp);
+	ReplaceOut.ar(outBus, sigOut);
+} ).add;
+
 ~wekiSyn_voc1 = {|oscInBus, audioIn, audioOut, interval = 5.0, pan = 0.0, /*scaleBuf,*/ amp = 1.0, mix = 1.0|
 	var numCh, inMsg, sigIn, sigOut, returnSynth, pitchRatio, pitchDisp, panMod;
 
@@ -156,7 +200,7 @@ o.blockSize;
 
 	returnSynth;
 };
-//NEW AUTOHARMONIZE SYNTH DEFS ------ ^^^^^^^^^^^^^^^^^^^ ----------
+//NEW SYNTH DEFS ------ ^^^^^^^^^^^^^^^^^^^ ----------
 
 //=======SIMPLE TESTS of Voc and Whistle Auto-Harmonize Synths===========//
 ~testSynth = ~wekiSyn_vocSimp.value;
@@ -218,37 +262,6 @@ SynthDef.new(\mousey, {|out|
 	returnSynth;
 };
 //========^^^^^^^^^====SIMPLE TESTS======^^^^^^^^^===============//
-
-//~first accomp synth, primitive Select of output .... synth amp and scale args are hardcoded..........
-/*~wekiSyn_wisl1 = {|oscInBus, audioIn, scaleBuf| //add arg for initial interval scale spread of weki output1???? (12 == (-12, 12) | 5 == (-5, 5) | etc...)
-	var numCh, inMsg, sigIn, sigOut, sigVoc, sigWhistle, returnSynth, pitchRatio;
-
-	numCh = oscInBus.numChannels;
-	//scale =  Scale.majorPentatonic;
-	//scale = [0, 2, 4, 7, 9];
-
-	returnSynth = SynthDef(\vwharm_weki1, { //<--put scaleBuf arg here too for scale modulation?
-		sigIn = In.ar(audioIn, 1);
-		inMsg = In.kr(oscInBus, numCh);
-
-		sigVoc = SinOsc.ar(220, mul: 0.1);
-
-		//pitchRatio = LinLin.kr(inMsg[1], 0, 1, 12, -12).round(1).midiratio.round(0.001).poll(2);
-		pitchRatio = DegreeToKey.kr(scaleBuf.bufnum, LinLin.kr(inMsg[1], 0, 1, 5, -5).round(1)).midiratio; //convert Weki out 1 into a transposition ratio from mapped scale degrees
-		sigWhistle = SelectX.ar(0.7, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002)]); //<--working
-		//sigWhistle = SinOsc.ar(440, mul: 0.1);
-
-		sigOut = SelectX.ar(inMsg[0] > 1.0, [sigVoc, sigWhistle]);
-
-		Out.ar([0, 1], sigOut);
-
-		//Poll.kr(3, inMsg[0], 'oscIn');
-		//inMsg[0].poll(3, 'oscIn');
-	}).play(addAction: \addToTail);
-
-	returnSynth;
-}; */
-
 
 /*
 //PITCH SHIFTING VOC / WHISTLING <------TRY THESE PARAMETERS
@@ -385,9 +398,20 @@ play({
 }).add; */
 
 SynthDef.new(\XFade, { //newer version w/ global amp control
-	|in1, in2, out, amountControlBus, amp = 1|
+	|in1, in2, out, amountControlBus, amp = 1.0|
 	var inArray, mixSignal, sig;
 	inArray = [In.ar(in1), In.ar(in2)];
+	//inArray = [InFeedback.ar(in1), InFeedback.ar(in2)];
+	mixSignal = SelectX.ar(amountControlBus, inArray);
+	sig = mixSignal * amp;
+	//OffsetOut.ar(out, sig); //should I use this instead?
+	Out.ar(out, sig);
+} ).add;
+
+SynthDef.new(\XFadeStereo, { //newer version w/ global amp control
+	|in1, in2, out, amountControlBus, amp = 1.0|
+	var inArray, mixSignal, sig;
+	inArray = [In.ar(in1, 2), In.ar(in2, 2)];
 	//inArray = [InFeedback.ar(in1), InFeedback.ar(in2)];
 	mixSignal = SelectX.ar(amountControlBus, inArray);
 	sig = mixSignal * amp;
