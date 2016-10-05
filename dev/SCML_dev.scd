@@ -4,13 +4,24 @@
 ( //#1 ======INITIALIZE SC SERVER ======
 o = Server.local.options;
 o.sampleRate = 44100;
-//o.blockSize = 64;
+//o.sampleRate = 48000;
+o.blockSize = 512;
+
 o.device = nil; //use system default soundcard
 s.latency = 0.05; //uncomment and evaluate this line if you want to adjust latency... 0.2 is SC default
 s.boot;
 )
-o.blockSize = 512;
-o.blockSize;
+
+(//alt startup...OPTIMIZE THIS?
+s = Server.local;
+ServerOptions.devices;
+s.options.sampleRate= 48000;
+s.options.inDevice = "MiC";
+s.options.outDevice = "Multi-Output Device";
+)
+
+s.plotTree;
+s.options.outDevice;
 ( //#2 ======SETUP======
 
 //NetAddr.localAddr;   // retrieve the current IP and port
@@ -52,22 +63,211 @@ o.blockSize;
 
 //================= NEW VOC/WHISTLE ACCOMP INST CODE =================//
 
-//NOTE TO SELF!!!!!:
-//--either:
-//   I. a.Control synth group volumes w/ Line.kr sends to control busses (~bus_wislAmp, etc.)
-//      b. connect ALL synth outputs to [0, 1] or just 0?? multichannel expansion right?
-//      .......simple...but not possible to process audio signals from specific synths since all outputting to master output bus channels [0, 1] ....   maybe okay for now
-
-//   II. a.Control synth group volumes w/ Line.kr sends to control busses (~bus_wislAmp, etc.)
-//       b. connect synth outputs to different subBusses (~bus_vocSynthSum, etc..)
-//       c. connect subBusses to 1+ synths that output signals from subBusses to audio out
-//      ..slightly more complicated...but can process different subMixes this way MUCH more flexible
-
 //   III. a. Control synth group volumes w/ Line.kr sends to control busses (~bus_wislAmp, etc.)
 //        b. connect synth outputs to respective sub busses (~bus_vocSynthSum, etc...)
 //        c. Use "accomp mix" synthDef w/ SelectX ugen, and an additional "AccompMix" control bus to control balance between voc and wisl synths being sent to final output (e.g. if ~bus_vocWislMix == 0.0, only voc accomp synths heard, if ~bus_vocWislMix == 1.0, only whistle synth(s) heard
 //      ....DOING THIS METHOD... conceptually more intuitive and easy to control w/ routine.
 
+
+s.plotTree;
+~vocA1.get(\amp, {|val| val.postln;} );
+~vocA1.set(\amp, 0.5); //testing
+
+~vocA2.get(\amp, {|val| val.postln;} );
+~vocA2.set(\amp, 0.5); //testing
+
+~wisA1.get(\amp, {|val| val.postln;} );
+~wisA1.set(\amp, 1.0); //testing
+
+~accomp_mix.set(\amp, 0.7);
+~accomp_mix.get(\amp, {|val| val.postln;} );
+
+~bus_vocwislMix.set(0.0); //testing
+
+//----------Synth Instantiation-----------
+s.plotTree;
+
+~dryIn1 = Synth(\mono2stereo, [\in, ~bus_input1, \amp, ~bus_dryIn1Amp.asMap, \out, 0]).moveAfter(i); //pipe dry mono input to stereo output
+~dryIn1.set(\amp,  ~bus_dryIn1Amp.asMap);
+
+~scale1 = Scale.majorPentatonic.degrees; //[0, 2, 4, 7, 9]
+~scaleBuf = Buffer.alloc(s, ~scale1.size, 1, {|b| b.setnMsg(0, ~scale1) } );
+
+~wisA1 = ~wekiSyn_wisl1.value(oscInBus: ~bus_oscIn_1, audioIn: ~bus_input1, audioOut: ~bus_wislSynthSum, scaleBuf: ~scaleBuf).moveAfter(~dryIn1); //whistle harmonizer 1
+~wisA1.set(\amp, ~bus_wislAmp.asMap);
+
+~vocA1 = ~wekiSyn_voc1.value(oscInBus: ~bus_oscIn_1, audioIn: ~bus_input1, audioOut: ~bus_vocSynthSum).moveAfter(~dryIn1); //voc harmonizer 1
+~vocA1.set(\amp, ~bus_vocAmp.asMap);
+
+~vocA2 = ~wekiSyn_voc1.value(oscInBus: ~bus_oscIn_1, audioIn: ~bus_input1, audioOut: ~bus_vocSynthSum).moveAfter(~dryIn1); //voc harmonizer 2
+~vocA2.set(\amp, ~bus_vocAmp.asMap);
+
+~accomp_mix = Synth(\XFadeStereo, [\in1, ~bus_vocSynthSum, \in2, ~bus_wislSynthSum, \out, 0, \amountControlBus, ~bus_vocwislMix.asMap, \amp, ~bus_accompAmp.asMap], addAction: \addToTail);
+
+~fx_reverb = Synth(\reverb2x2, [\outBus, 0, \mix, ~bus_verbMix.asMap, \room, ~bus_verbRoom.asMap], addAction: \addToTail); //stereo reverb processing sum output
+//----------------------------------------------
+
+//----------------------------+++++
+~wekiSynthControl1 = ~routine_wekiSynthControl1.value(oscInBus: ~bus_oscIn_1, rate: 0.1);
+SystemClock.play(~wekiSynthControl1);
+~wekiSynthControl1.stop;
+~wekiSynthControl1.reset;
+//~bus_oscIn_1 = Bus.control(s, 4); //test bus
+//~bus_oscIn_1.set(2, 0.6, 1, 1);
+//~bus_oscIn_1.set(1, 0.6, 2, 1);
+~bus_oscIn_1 = ~oscIn_weki_1.value(numIn: 4, defKey: "oscDef1", port: 12000);  //#1
+~bus_oscIn_1.get({|i| i.postln;/*var a; a = i[0].asInteger; i[0].postln; i[0].isFloat.postln; a.isFloat.postln;*/ });
+~bus_oscIn_1.free;
+
+//===========ACCOMP SYNTH AND FX CONTROL ROUTINE===========
+~flag_wekSyn_prevIn = 1; //langside flag storing last input from WekiOut1, 1 == voc, 2 == whistle
+~flag_wekSyn_prevIn_change = false; //flag for debouncing sudden changes due to input noise
+~flag_wekSyn_prevVow = 1; //flag for storing last input from WekiOut3, 1 == ah, 2 == eh, 3 == ee, 4 == oh, 5 == oo
+~flag_wekSyn_prevVow_change = false; //flag for debouncing sudden changes due to input noise
+~yieldTime_wsc1 = 0.1;
+~debounceTime = 0.3;
+
+~routine_wekiSynthControl1 = {|oscInBus, rate = 0.1| //<<<<<<<<<<<<<<<<<<
+	Routine ({
+		//~yieldTime_wsc1 = rate.asFloat; //<---necessary?
+		oscInBus.get({ |msg|
+			if (msg[0] == 1, { //"voc detected"
+				if (~flag_wekSyn_prevIn == 1, { //sound source has not changed since prev bus.get
+					var x;
+					~flag_wekSyn_prevIn_change = false; //reset debounce flag in case it was previously triggered
+					//CARRY ON... do anything???
+					//"msg[0] = 1 - NO CHANGE".postln;
+
+					//MONITOR CHANGES IN msg[2] <<<<<<<<
+					x = case
+					{msg[2] == 1} {//if msg[2] == 1 - 'AH' DETECTED
+						//"msg[2] = 1 - AH".postln;
+						~vocA1.set(\interval, -5, \pan, -0.75);
+						~vocA2.set(\interval, 4.25, \pan, 0.75);
+						/*
+						if (~flag_wekSyn_prevVow == 1, { //msg[2] has not changed since prev bus.get
+
+						~flag_wekSyn_prevVow_change = false; //reset flag if it was triggered by noise
+
+						//CARRY ON W/ 'AH' COMMANDS
+
+						~yieldTime_wsc1 = rate.asFloat; //0.1 <----necessary???
+						} , { //else if ~flag_prevVow != 1, maybe we're changing vowels
+						//DEBOUNCE
+						if (~flag_wekSyn_prevVow_change == false, {
+						~flag_wekSyn_prevVow_change = true;
+						"msg[2] = 1 | prev msg[2] = ? - STATE CHANGE TEST".postln;
+						~yieldTime_wsc1 = ~debounceTime; //"debounce" time
+						}, { //else if ~flag_stateChange == true, state has changed and remained same long enough to rule out noise, and we can proceed with triggered changes
+						~flag_wekSyn_prevVow_change = false;
+
+						//DO STUFF WHEN 'AH' FIRST DETECTED
+
+						~flag_wekSyn_prevVow = 1; //set flag to remember last state before resetting routine
+						"msg[2] = 1 | prev msg[2] = ? - STATE CHANGE CONFIRMED".postln;
+						~yieldTime_wsc1 = rate; //<---yea?
+
+						} );
+						} );
+						*/
+					}
+					{msg[2] == 2} {//if msg[2] == 2 - 'EH' DETECTED
+						//DEBOUNCE?
+
+						//"msg[2] = 1 - EH".postln;
+						~vocA1.set(\interval, -3, \pan, -0.6);
+						~vocA2.set(\interval, 5, \pan, 0.6);
+
+						//ANYTHING ELSE? (OPTIONAL EFFECTS PER VOWEL?
+
+						//~yieldTime_wsc1 = rate.asFloat; //actually not here?
+					}
+					{msg[2] == 3} {//if msg[2] == 3 - 'EE'
+						//DEBOUNCE?
+
+						//"msg[2] = 1 - EE".postln;
+						~vocA1.set(\interval, -4, \pan, -0.45);
+						~vocA2.set(\interval, 10, \pan, 0.45);
+						//~yieldTime_wsc1 = rate.asFloat;
+					}
+					{msg[2] == 4} {//if msg[2] == 4 - 'OH'
+						//DEBOUNCE?
+
+						//"msg[2] = 1 - OH".postln;
+						~vocA1.set(\interval, -3, \pan, -0.6);
+						~vocA2.set(\interval, 7, \pan, 0.6);
+						//~yieldTime_wsc1 = rate.asFloat;
+					}
+					{msg[2] == 5} {//if msg[2] == 5 'OO'
+						//DEBOUNCE?
+
+						//"msg[2] = 1 - OO".postln;
+						~vocA1.set(\interval, -4, \pan, -0.25);
+						~vocA2.set(\interval, 5, \pan, 0.25);
+						//~yieldTime_wsc1 = rate.asFloat;
+					};
+					~yieldTime_wsc1 = rate.asFloat; //<---
+				} , { //else ~flag_wekSyn_prevIn == 2, we're changing from  "2 - whistling" to "1 - voc"
+
+					//CHECK TO SEE IF TIME THRESHOLD SURPASSED BEFORE CONFIRMING STATE CHANGE
+					if (~flag_wekSyn_prevIn_change == false, {
+						~flag_wekSyn_prevIn_change = true;
+						//"msg[0] = 1 | prev msg[0] = 2 - STATE CHANGE TEST".postln;
+						~yieldTime_wsc1 = ~debounceTime; //"debounce" time
+					}, { //else if ~flag_stateChange == true, state has changed and remained same long enough to rule out noise, and we can proceed with triggered changes
+						var interpSynth, interpVerbRoom, interpVerbMix;
+						~flag_wekSyn_prevIn_change = false;
+						//XFADE ~mixAmount.bus from whistle to voc processing synth busses (1.0 - 0.0)
+						interpSynth = Synth(\LinInterp_num, [\startVal, 1.0, \stopVal, 0.0, \duration, 0.2, \out, ~bus_vocwislMix]);
+						interpVerbRoom = Synth(\LinInterp_num, [\startVal, 0.7, \stopVal, 0.4, \duration, 0.2, \out, ~bus_verbRoom]);
+						interpVerbMix = Synth(\LinInterp_num, [\startVal, 0.6, \stopVal, 0.3, \duration, 0.2, \out, ~bus_verbMix]);
+						//0.2.yield; //<---CAUSES ERROR b/c "Not in Routine" - worried I'd need this for stability? otherwise routine might just race away and fire off lots of these synths on edge cases?
+
+						~flag_wekSyn_prevIn = 1; //set flag to remember last state before resetting routine
+						//"msg[0] = 1 | prev msg[0] = 1 - STATE CHANGE CONFIRMED".postln;
+						~yieldTime_wsc1 = rate.asFloat; //<---
+					} );
+				} );
+			} , { //ELSE======= if msg[0] == 2 "whistling detected"
+				if (~flag_wekSyn_prevIn == 2, { //sound source has not changed since prev bus.get
+					~flag_wekSyn_prevIn_change = false; //reset debounce flag
+
+					//CARRY ON.... do anything?
+					//"msg[0] = 2 - NO CHANGE".postln;
+
+					~yieldTime_wsc1 = rate.asFloat; //<----
+				} , { //else flag must have changed recently from "1 - voc" to "2 - whistling"
+
+					//CHECK TO SEE IF TIME THRESHOLD SURPASSED BEFORE CONFIRMING STATE CHANGE
+					if (~flag_wekSyn_prevIn_change == false, {
+						~flag_wekSyn_prevIn_change = true;
+						//"msg[0] = 2 | prev msg[0] = 1 - STATE CHANGE TEST".postln;
+						~yieldTime_wsc1 = ~debounceTime; //"debounce" time <---
+					}, { //else if ~flag_stateChange == true, state has changed and remained same long enough to rule out noise, and we can proceed with triggered changes
+						var interpSynth, interpVerbRoom, interpVerbMix;
+						~flag_wekSyn_prevIn_change = false;
+
+						//XFADE ~mixAmount.bus from voc to whistle processing synth busses (0.0 - 1.0)
+						interpSynth = Synth(\LinInterp_num, [\startVal, 0.0, \stopVal, 1.0, \duration, 0.2, \out, ~bus_vocwislMix]);
+						interpVerbRoom = Synth(\LinInterp_num, [\startVal, 0.4, \stopVal, 0.7, \duration, 0.2, \out, ~bus_verbRoom]);
+						interpVerbMix = Synth(\LinInterp_num, [\startVal, 0.3, \stopVal, 0.6, \duration, 0.2, \out, ~bus_verbMix]);
+						//0.2.yield; //<---CAUSES ERROR b/c "Not in Routine" - worried I'd need this for stability? otherwise routine might just race away and fire off lots of these synths on edge cases?
+
+						~flag_wekSyn_prevIn = 2; //set flag to remember last state before resetting routine
+						//"msg[0] = 2 | prev msg[0] = 2 - STATE CHANGE CONFIRMED".postln;
+						~yieldTime_wsc1 = rate.asFloat; //<---
+					} );
+				} );
+			} );
+		});
+		//"Out of .get, before slight .yield".postln;
+		0.02.yield; //<-----ANY OTHER WAY W/OUT INDUCING LATENCY!??????
+	//	("yieldTime_wsc1 = " ++ ~yieldTime_wsc1).postln;
+		~yieldTime_wsc1.yieldAndReset; //<---necessary or simply leave as rate.yieldAndReset???
+	});
+};
+
+//BUSSES
 ~bus_dryIn1Amp = Bus.control(s, 1); //dry input level bus
 ~bus_vocAmp = Bus.control(s, 1); //voc proc synth sum level bus
 ~bus_wislAmp = Bus.control(s, 1); //whistle proc synth sum level bus
@@ -76,59 +276,19 @@ o.blockSize;
 ~bus_verbMix = Bus.control(s, 1);
 ~bus_verbRoom = Bus.control(s, 1);
 
-~bus_vocSynthSum = Bus.audio(s, 2); //yea? to make it easier to process groups of synths?
-~bus_wislSynthSum = Bus.audio(s, 2); //yea?
-
-~bus_vocSynthSub = Bus.audio(s, 2); //NOT NEEDED? if not using subMix synths...
-~bus_wislSynthSub = Bus.audio(s, 2); //NOT NEEDED? if not using subMix synths...
-~bus_outMain = Bus.audio(s, 2);  //NOT NEEDED?
+~bus_vocSynthSum = Bus.audio(s, 2);
+~bus_wislSynthSum = Bus.audio(s, 2);
 
 ~bus_dryIn1Amp.set(0.3); //make these static values b/c using SelectX's to control mix levels?
-~bus_vocAmp.set(0.5); //make these static values b/c using SelectX's to control mix levels?
+//~bus_dryIn1Amp.get({|val| val.postln;});
+~bus_accompAmp.set(1.0);
+~bus_vocAmp.set(0.6); //two voc accomp synths (0.5 x 2 = 1.0)
+//~bus_vocAmp.get({|val| val.postln;});
 ~bus_wislAmp.set(1.0); //make these static values b/c using SelectX's to control mix levels?
 ~bus_vocwislMix.set(0.0); //0 = voc accomp only, 1 = whistle accomp only. Set via control routine
-~bus_accompAmp.set(0.7); //if using this method, set ~bus_vocAmp and ~bus_wislAmp to (1.0)
-~bus_verbMix.set(0.25);
-~bus_verbRoom.set(0.15);
 
-
-~vocSynthSum_mix = Synth(\subMix, [\inBus, ~bus_vocSynthSum, \amp, ~bus_vocAmp.asMap, \outBus, ~bus_outMain/*or just 0???*/]); //voc accomp sum mix synth. NOT NEEDED IF: controlling subSynth levels w/ ~bus_vocAmp and outputting to ~bus_vocSynthSum, OTHERWISE - create additional bus to output to from this synth to use as input bus for ~accomp_mix XFADE synth
-
-~wislSynthSum_mix = Synth(\subMix, [\inBus, ~bus_wislSynthSum, \amp, ~bus_wislAmp.asMap, \outBus, ~bus_outMain]); //whistle accomp sum mix synth. NOT NEEDED IF: controlling subSynth levels w/ ~bus_wislAmp and outputting to ~bus_wislSynthSum, OTHERWISE - create additional bus to output to from this synth to use as input bus for ~accomp_mix XFADE synth
-
-~masterOut = Synth(\subMix, [in: ~bus_outMain, out: 0]); //NEEDED?
-
-
-//----------Synth Instantiation-----------
-s.plotTree;
-~dryIn1 = Synth(\mono2stereo, [\in, ~bus_input1, \amp, ~bus_dryIn1Amp.asMap, \out, 0]).moveAfter(i); //pipe dry mono input to stereo output
-~dryIn1.set(\pan, 0);
-
-~scale1 = Scale.majorPentatonic.degrees; //[0, 2, 4, 7, 9]
-~scaleBuf = Buffer.alloc(s, ~scale1.size, 1, {|b| b.setnMsg(0, ~scale1) } );
-
-~wisA1 = ~wekiSyn_wisl1.value(oscInBus: ~bus_oscIn_1, audioIn: ~bus_input1, audioOut: ~bus_wislSynthSum, scaleBuf: ~scaleBuf, amp: ~bus_wislAmp.asMap); //whistle harmonizer 1
-~wisA1.moveAfter(~dryIn1); //necessary to ensure proper nodeTree order?
-
-~vocA1 = ~wekiSyn_voc1.value(oscInBus: ~bus_oscIn_1, audioIn: ~bus_input1, audioOut: ~bus_vocSynthSum, interval: 5.0, pan: 0.25, amp: ~bus_vocAmp.asMap); //voc harmonizer 1
-~vocA1.moveAfter(~dryIn1); //necessary to ensure proper nodeTree order?
-
-
-~vocA2 = ~wekiSyn_voc1.value(oscInBus: ~bus_oscIn_1, audioIn: ~bus_input1, audioOut: ~bus_vocSynthSum, interval: -2.0, pan: -0.25, amp: ~bus_vocAmp.asMap); //voc harmonizer 2
-~vocA2.moveAfter(~dryIn1); //necessary to ensure proper nodeTree order?
-
-~vocA2.set(\pan, -0.5);
-~vocA1.set(\pan, 0.5);
-~bus_vocwislMix.set(0.0);
-
-~accomp_mix = Synth(\XFadeStereo, [\in1, ~bus_vocSynthSum, \in2, ~bus_wislSynthSum, \out, 0, \amountControlBus, ~bus_vocwislMix.asMap, \amp, ~bus_accompAmp.asMap], addAction: \addToTail);
-
-~fx_reverb = Synth(\reverb2x2, [\outBus, 0, \mix, ~bus_verbMix.asMap, \room, ~bus_verbRoom.asMap], addAction: \addToTail); //stereo reverb processing sum output
-
-~bus_verbMix.set(0.5);
-~bus_verbRoom.set(0.7);
-~fx_reverb.set(\damp, 0.1);
-//----------------------------------------------
+~bus_verbMix.set(0.3);
+~bus_verbRoom.set(0.4);
 
 //NEW SYNTH DEFS ------ vvvvvvvvvvvvvvvvvvv ----------
 SynthDef.new(\mono2stereo, { //pass mono input to stereo output
@@ -148,20 +308,20 @@ SynthDef.new(\reverb2x2, {|outBus, mix = 0.25, room = 0.15, damp = 0.2, amp = 1.
 	ReplaceOut.ar(outBus, sigOut);
 } ).add;
 
-~wekiSyn_voc1 = {|oscInBus, audioIn, audioOut, interval = 5.0, pan = 0.0, /*scaleBuf,*/ amp = 1.0, mix = 1.0|
+~wekiSyn_voc1b = {|oscInBus, audioIn, audioOut, interval = 5.0, pan = 0.0, amp = 1.0|
 	var numCh, inMsg, sigIn, sigOut, returnSynth, pitchRatio, pitchDisp, panMod;
 
 	numCh = oscInBus.numChannels;
 
-	returnSynth = SynthDef(\vocHarm_weki1, {|interval = 5.0, pan = 0.0, amp = 1.0, mix = 1.0|
+	returnSynth = SynthDef(\vocHarm_weki1, {|interval, pan, amp, mix = 1.0|
 		sigIn = In.ar(audioIn, 1);
 		inMsg = In.kr(oscInBus, numCh);
 
 		pitchRatio = interval.asFloat.round(0.01).midiratio; //set pitch transposition (semi-tone intervals)
-		pitchDisp = LinLin.kr(inMsg[1], 0, 1, 0, 0.12).round(0.01); //scale weki out1 for pitchDisp val
+		//pitchDisp = LinLin.kr(inMsg[1], 0, 1, 0, 0.12).round(0.01); //scale weki out1 for pitchDisp val
 
-		//sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002)]);
-		sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, pitchDisp, 0.002)]);
+		sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002)]);
+		//sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, pitchDisp, 0.002)]);
 		//sigOut = FreeVerb.ar(sigOut, mix: 0.33, room: LinLin.kr(inMsg[1], 0, 1, 0.1, 0.4)); //no...make another synth for verb processing sum out...
 
 		//panMod = LinLin.kr(inMsg[1], 0, 1, -0.35, 0.35).round(0.01); //consider
@@ -176,10 +336,40 @@ SynthDef.new(\reverb2x2, {|outBus, mix = 0.25, room = 0.15, damp = 0.2, amp = 1.
 	returnSynth;
 };
 
-~wekiSyn_wisl1 = {|oscInBus, audioIn, audioOut, scaleBuf, amp = 1.0, mix = 1.0| //add arg for initial interval scale spread of weki output1???? (12 == (-12, 12) | 5 == (-5, 5) | etc...)
-	var numCh, inMsg, sigIn, sigOut, returnSynth, pitchRatio, pitchDisp;
+~wekiSyn_voc1 = {//|oscInBus, audioIn, audioOut, interval = 5.0, pan = 0.0, /*scaleBuf,*/ amp = 1.0, mix = 1.0| //FUNCTION ARGS AREN'T BEING TRANSFERED TO SYNTHDEF ARGS !!!!!
+	|oscInBus, audioIn, audioOut|
+	var numCh, inMsg, sigIn, sigOut, returnSynth, pitchRatio, pitchDisp, panMod;
 
 	numCh = oscInBus.numChannels;
+
+	returnSynth = SynthDef(\vocHarm_weki1, {|interval = 5.0, pan = 0.0, amp = 0.5, mix = 1.0|
+		sigIn = In.ar(audioIn, 1);
+		inMsg = In.kr(oscInBus, numCh);
+
+		pitchRatio = interval.asFloat.round(0.01).midiratio; //set pitch transposition (semi-tone intervals)
+		//pitchDisp = LinLin.kr(inMsg[1], 0, 1, 0, 0.12).round(0.01); //scale weki out1 for pitchDisp val
+
+		sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002)]);
+		//sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, pitchDisp, 0.002)]);
+		//sigOut = FreeVerb.ar(sigOut, mix: 0.33, room: LinLin.kr(inMsg[1], 0, 1, 0.1, 0.4)); //no...make another synth for verb processing sum out...
+
+		//panMod = LinLin.kr(inMsg[1], 0, 1, -0.35, 0.35).round(0.01); //consider
+		//pan = Clip.kr(pan.asFloat + panMod, -0.9, 0.9); //consider
+
+		sigOut = Pan2.ar(sigOut, pan.asFloat); //?? yes?
+		//sigOut = Splay.ar(sigOut, LinLin.kr(inMsg[1], 0, 1, 0, 0.2)); //yea / no?
+
+		Out.ar(audioOut, sigOut * amp);
+	}).play(addAction: \addToTail);
+
+	returnSynth;
+};
+
+~wekiSyn_wisl1 = {//|oscInBus, audioIn, audioOut, scaleBuf, amp = 1.0, mix = 1.0|
+	|oscInBus, audioIn, audioOut, scaleBuf| //add arg for initial interval scale spread of weki output1???? (12 == (-12, 12) | 5 == (-5, 5) | etc...)
+	var numCh, inMsg, sigIn, sigOut, returnSynth, pitchRatio, pitchDisp;
+
+	numCh = oscInBus.numChannels; //<--this is working, right?
 
 	returnSynth = SynthDef(\wislHarm_weki1, {|amp = 1.0, mix = 1.0| //can't use scaleBuf as arg for this synthDef :(
 		sigIn = In.ar(audioIn, 1);
@@ -187,13 +377,13 @@ SynthDef.new(\reverb2x2, {|outBus, mix = 0.25, room = 0.15, damp = 0.2, amp = 1.
 
 		pitchRatio = DegreeToKey.kr(scaleBuf.bufnum, LinLin.kr(inMsg[1], 0, 1, 5, -5).round(1)).midiratio; //convert Weki out 1 into a transposition ratio from mapped scale degrees
 
-		pitchDisp = LinLin.kr(inMsg[1], 0, 1, 0, 0.12).round(0.01); //scale weki out1 for pitchDisp val
+		//pitchDisp = LinLin.kr(inMsg[1], 0, 1, 0, 0.12).round(0.01); //scale weki out1 for pitchDisp val
 
-		//sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002)]); //no pDisp
-		sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, pitchDisp, 0.002)]); //pDisp
+		sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002)]); //no pDisp
+		//sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, pitchDisp, 0.002)]); //pDisp
 
-		//sigOut = FreeVerb.ar(sigOut, mix: 0.33, room: LinLin.kr(inMsg[1], 0, 1, 0.01, 0.7)); //?? yes?
-		sigOut = Pan2.ar(sigOut, LinLin.kr(inMsg[1], 0, 1, -0.35, 0.35)); //mod pan w/ weki out??
+		sigOut = Pan2.ar(sigOut, 0);
+		//sigOut = Pan2.ar(sigOut, LinLin.kr(inMsg[1], 0, 1, -0.35, 0.35)); //mod pan w/ weki out??
 
 		Out.ar(audioOut, sigOut * amp);
 	}).play(addAction: \addToTail);
@@ -201,192 +391,6 @@ SynthDef.new(\reverb2x2, {|outBus, mix = 0.25, room = 0.15, damp = 0.2, amp = 1.
 	returnSynth;
 };
 //NEW SYNTH DEFS ------ ^^^^^^^^^^^^^^^^^^^ ----------
-
-//=======SIMPLE TESTS of Voc and Whistle Auto-Harmonize Synths===========//
-~testSynth = ~wekiSyn_vocSimp.value;
-~testSynth.set(\interval, -2.0, \pan, 0.0, \mix, 0.2);
-~testSynth.free;
-
-~wekiSyn_vocSimp = {|interval = 5.0, pan = 0.0, /*scaleBuf,*/ amp = 1.0, mix = 1.0| //add arg for initial interval scale spread of weki output1???? (12 == (-12, 12) | 5 == (-5, 5) | etc...)
-	var sigIn, sigOut, returnSynth, pitchRatio;
-
-	returnSynth = SynthDef(\vocHarm_weki1, {|interval = 5.0, pan = 0.0, /*scaleBuf,*/ amp = 1.0, mix = 1.0| //<--needed to control synth after initial creation w/ ~wekiSyn_wisl1 execution???
-		sigIn = SoundIn.ar(0);
-
-		pitchRatio = interval.asFloat.round(0.01).midiratio; //set pitch transposition (semi-tone intervals)
-		sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002)]); //<----not sure if I want this dry/wet signal mixing functionality.....decide...?
-		//sigOut =  PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002);
-
-		//sigOut = FreeVerb.ar(sigOut, mix: 0.33, room: LinLin.kr(inMsg[1], 0, 1, 0.01, 0.25)); //?? yes?
-		sigOut = Pan2.ar(sigOut, pan.asFloat); //?? yes?
-		//sigOut = Splay.ar(sigOut, LinLin.kr(inMsg[1], 0, 1, 0, 0.2)); //yea / no?
-
-		Out.ar(0, sigOut * amp);
-	}).play(addAction: \addToTail);
-
-	returnSynth;
-};
-
-~scale1 = Scale.majorPentatonic.degrees; //[0, 2, 4, 7, 9]
-~scaleBuf = Buffer.alloc(s, ~scale1.size, 1, {|b| b.setnMsg(0, ~scale1) } );
-~scaleBuf.free;
-~testSynth = ~wekiSyn_wislSimp.value(controlIn: ~bus_MouseX, scaleBuf: ~scaleBuf);
-~testSynth.set(\room, 0.65, \rmix, 0.3, \mix, 0.6,  \pan, 0.0);
-~testSynth.free;
-
-SynthDef.new(\mousey, {|out|
-	var sig = MouseX.kr(0, 1);
-	Out.kr(out, sig);
-} ).add;
-
-~bus_MouseX = Bus.control(s, 1);
-~mousey = Synth(\mousey, [~bus_MouseX]);
-
-~wekiSyn_wislSimp = {|controlIn, scaleBuf, amp = 1.0, mix = 1.0, room = 0.65, rmix = 0.3, pan = 0.0| //add arg for initial interval scale spread of weki output1???? (12 == (-12, 12) | 5 == (-5, 5) | etc...)
-	var sigIn, sigOut, controlVal, returnSynth, pitchRatio;
-
-	returnSynth = SynthDef(\wislHarm_weki1, {|pitchInt = 3, amp = 1.0, mix = 1.0, room = 0.65, rmix = 0.3, pan = 0.0| //<--needed to control synth after initial creation w/ ~wekiSyn_wisl1 execution???
-		controlVal = In.kr(controlIn, 1);
-		sigIn = SoundIn.ar(0);
-		//pitchRatio = DegreeToKey.kr(scaleBuf.bufnum, pitchInt.round(0.01)).midiratio;
-		pitchRatio = DegreeToKey.kr(scaleBuf.bufnum, LinLin.kr(controlVal, 0, 1, 5, -5).round(1)).midiratio;
-		sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002)]); //<----not sure if I want this dry/wet signal mixing functionality.....decide...?
-
-		sigOut = FreeVerb.ar(sigOut, mix: rmix, room: room); //?? yes?
-		sigOut = Pan2.ar(sigOut, pan); //?? yes?
-		//sigOut = Splay.ar(sigOut, splay); //not stereo spreader I believe (at least w/ one input...?)
-
-		Out.ar(0, sigOut * amp);
-	}).play(addAction: \addToTail);
-
-	returnSynth;
-};
-//========^^^^^^^^^====SIMPLE TESTS======^^^^^^^^^===============//
-
-/*
-//PITCH SHIFTING VOC / WHISTLING <------TRY THESE PARAMETERS
-play({
-    PitchShift.ar(
-        AudioIn.ar([1,2]),    // stereo audio input
-        0.1,             // grain size
-		MouseX.kr(0.25, 3, 1),    //pitchRatio: mod by Weki_Output2 (Relative Pitch Follower)
-		MouseY.kr(0, 0.15), // pitch dispersion: mod/switch case different vals based on WekiOut1, 3, 4?
-		0.002 // time dispersion
-    )
-})
-*/
-//===========ACCOMP SYNTH AND FX CONTROL ROUTINE===========
-~flag_wekSyn_prevIn = 1; //langside flag storing last input from WekiOut1, 1 == voc, 2 == whistle
-~flag_wekSyn_prevIn_change = false; //flag for debouncing sudden changes due to input noise
-~flag_wekSyn_prevVow = 1; //flag for storing last input from WekiOut3, 1 == ah, 2 == eh, 3 == ee, 4 == oh, 5 == oo
-~flag_wekSyn_prevVow_change = false; //flag for debouncing sudden changes due to input noise
-
-~routine_wekiSynthControl1 = {|oscInBus, rate = 0.1| //<<<<<<<<<<<<<<<<<<
-	Routine ({
-		var yieldTime = rate; //<---necessary? maybe need to change to permit state change activity?
-		oscInBus.get({ |msg|
-			{
-				if (msg[0] == 1, { //"voc detected"
-					if (~flag_wekSyn_prevIn == 1, { //sound source has not changed since prev bus.get
-						~flag_wekSyn_prevIn_change = false; //reset debounce flag in case it was previously triggered
-						//CARRY ON... do anything???
-						"msg[0] = 1 - NO CHANGE".postln;
-
-						//MONITOR CHANGES IN msg[2] <<<<<<<<
-						switch (msg[2],
-							1, {//if msg[2] == 1
-								if (~flag_wekSyn_prevVow == 1, { //msg[2] has not changed since prev bus.get
-									~flag_wekSyn_prevVow_change = false; //reset flag if it was triggered by noise
-
-									//CARRY ON W/ 'AH' COMMANDS
-
-									yieldTime = rate; //0.1 <----necessary???
-								} , { //else if ~flag_prevVow != 1, maybe we're changing vowels
-									//DEBOUNCE
-									if (~flag_wekSyn_prevVow_change == false, {
-										~flag_wekSyn_prevVow_change = true;
-										"msg[2] = 1 | prev msg[2] = ? - STATE CHANGE TEST".postln;
-										yieldTime = 0.3; //"debounce" time
-									}, { //else if ~flag_stateChange == true, state has changed and remained same long enough to rule out noise, and we can proceed with triggered changes
-										~flag_wekSyn_prevVow_change = false;
-
-										//DO STUFF WHEN 'AH' FIRST DETECTED
-
-										~flag_wekSyn_prevVow = 1; //set flag to remember last state before resetting routine
-										"msg[2] = 1 | prev msg[2] = ? - STATE CHANGE CONFIRMED".postln;
-										yieldTime = rate; //<---yea?
-									} );
-								} );
-							},
-							2, {//if msg[2] == 2
-								//DEBOUNCE
-								//DO STUFF WHEN 'EH' DETECTED
-							},
-							3, {//if msg[2] == 3
-
-							},
-							4, {//if msg[2] == 4
-
-							},
-							5, {//if msg[2] == 5
-
-							}
-						);
-
-
-						yieldTime = rate; //0.1 <----necessary???
-					} , { //else ~flag_wekSyn_prevIn == 2, we're changing from  "2 - whistling" to "1 - voc"
-
-						//CHECK TO SEE IF TIME THRESHOLD SURPASSED BEFORE CONFIRMING STATE CHANGE
-						if (~flag_wekSyn_prevIn_change == false, {
-							~flag_wekSyn_prevIn_change = true;
-							"msg[0] = 1 | prev msg[0] = 2 - STATE CHANGE TEST".postln;
-							yieldTime = 0.3; //"debounce" time
-						}, { //else if ~flag_stateChange == true, state has changed and remained same long enough to rule out noise, and we can proceed with triggered changes
-							~flag_wekSyn_prevIn_change = false;
-
-							//fade in Voc processing synths
-							//fade out whistle processing synth(s)
-
-							~flag_wekSyn_prevIn = 1; //set flag to remember last state before resetting routine
-							"msg[0] = 1 | prev msg[0] = 1 - STATE CHANGE CONFIRMED".postln;
-							yieldTime = rate; //<---yea?
-						} );
-					} );
-				} , { //else if msg[0] == 2 "whistling detected"
-					if (~flag_wekSyn_prevIn == 2, { //sound source has not changed since prev bus.get
-						~flag_wekSyn_prevIn_change = false; //reset debounce flag
-
-						//CARRY ON.... do anything?
-						"msg[0] = 2 - NO CHANGE".postln;
-
-						yieldTime = rate; //0.1 <----necessary???
-					} , { //else flag must have changed recently from "1 - voc" to "2 - whistling"
-
-						//CHECK TO SEE IF TIME THRESHOLD SURPASSED BEFORE CONFIRMING STATE CHANGE
-						if (~flag_wekSyn_prevIn_change == false, {
-							~flag_wekSyn_prevIn_change = true;
-							"msg[0] = 2 | prev msg[0] = 1 - STATE CHANGE TEST".postln;
-							yieldTime = 0.3; //"debounce" time
-						}, { //else if ~flag_stateChange == true, state has changed and remained same long enough to rule out noise, and we can proceed with triggered changes
-							~flag_wekSyn_prevIn_change = false;
-
-							//fade in whistle processing synths
-							//fade out Voc processing synth(s)
-
-							~flag_wekSyn_prevIn = 2; //set flag to remember last state before resetting routine
-							"msg[0] = 2 | prev msg[0] = 2 - STATE CHANGE CONFIRMED".postln;
-							yieldTime = rate; //<---yea?
-						} );
-					} );
-				} );
-			}.defer;
-		});
-		yieldTime.yieldAndReset; //<---necessary or simply leave as rate.yieldAndReset???
-	});
-};
-
-
 ////////////////SYNTH DEFS IMPORTED FROM SONIC MIRROR////////////////
 /*SynthDef.new(\pitchShifter, {
 	arg inBus, outBus, windowSize = 0.2, pitchRatio = 1, pitchDispers = 0, timeDispers = 0.2, amp = 1;
@@ -593,7 +597,7 @@ SynthDef.new(\onsets, {
 };
 
 ~getSend_busSum = {arg bus, netAdr, oscMsg;
-	var numCh = bus.numChannels;
+	var numCh = bus.numChannels; //needed for message posting...
 	bus.get( {arg val; { //<---changing to getSynchronous prevents OSC output for some reason...?
 		netAdr.sendMsg(*[oscMsg] ++ val); //transmit feature vals via OSC
 		/*switch (bus, //monitor feature values in SC (can be commented out to reduce CPU)
@@ -816,3 +820,98 @@ OSCdef.freeAll;
 )
 
 s.quit;
+
+
+
+
+
+
+
+
+
+//==============================================
+//=======SIMPLE TESTS of Voc and Whistle Auto-Harmonize Synths===========//
+~testSynth = ~wekiSyn_vocSimp.value;
+~testSynth.set(\interval, -2.0, \pan, 0.0, \mix, 0.2);
+~testSynth.free;
+
+~wekiSyn_vocSimp = {|interval = 5.0, pan = 0.0, /*scaleBuf,*/ amp = 1.0, mix = 1.0| //add arg for initial interval scale spread of weki output1???? (12 == (-12, 12) | 5 == (-5, 5) | etc...)
+	var sigIn, sigOut, returnSynth, pitchRatio;
+
+	returnSynth = SynthDef(\vocHarm_weki1, {|interval = 5.0, pan = 0.0, /*scaleBuf,*/ amp = 1.0, mix = 1.0| //<--needed to control synth after initial creation w/ ~wekiSyn_wisl1 execution???
+		sigIn = SoundIn.ar(0);
+
+		pitchRatio = interval.asFloat.round(0.01).midiratio; //set pitch transposition (semi-tone intervals)
+		sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002)]); //<----not sure if I want this dry/wet signal mixing functionality.....decide...?
+		//sigOut =  PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002);
+
+		//sigOut = FreeVerb.ar(sigOut, mix: 0.33, room: LinLin.kr(inMsg[1], 0, 1, 0.01, 0.25)); //?? yes?
+		sigOut = Pan2.ar(sigOut, pan.asFloat); //?? yes?
+		//sigOut = Splay.ar(sigOut, LinLin.kr(inMsg[1], 0, 1, 0, 0.2)); //yea / no?
+
+		Out.ar(0, sigOut * amp);
+	}).play(addAction: \addToTail);
+
+	returnSynth;
+};
+
+~scale1 = Scale.majorPentatonic.degrees; //[0, 2, 4, 7, 9]
+~scaleBuf = Buffer.alloc(s, ~scale1.size, 1, {|b| b.setnMsg(0, ~scale1) } );
+~scaleBuf.free;
+~testSynth = ~wekiSyn_wislSimp.value(controlIn: ~bus_MouseX, scaleBuf: ~scaleBuf);
+~testSynth.set(\room, 0.65, \rmix, 0.3, \mix, 0.6,  \pan, 0.0);
+~testSynth.free;
+
+SynthDef.new(\mousey, {|out|
+	var sig = MouseX.kr(0, 1);
+	Out.kr(out, sig);
+} ).add;
+
+~bus_MouseX = Bus.control(s, 1);
+~mousey = Synth(\mousey, [~bus_MouseX]);
+
+~wekiSyn_wislSimp = {|controlIn, scaleBuf, amp = 1.0, mix = 1.0, room = 0.65, rmix = 0.3, pan = 0.0| //add arg for initial interval scale spread of weki output1???? (12 == (-12, 12) | 5 == (-5, 5) | etc...)
+	var sigIn, sigOut, controlVal, returnSynth, pitchRatio;
+
+	returnSynth = SynthDef(\wislHarm_weki1, {|pitchInt = 3, amp = 1.0, mix = 1.0, room = 0.65, rmix = 0.3, pan = 0.0| //<--needed to control synth after initial creation w/ ~wekiSyn_wisl1 execution???
+		controlVal = In.kr(controlIn, 1);
+		sigIn = SoundIn.ar(0);
+		//pitchRatio = DegreeToKey.kr(scaleBuf.bufnum, pitchInt.round(0.01)).midiratio;
+		pitchRatio = DegreeToKey.kr(scaleBuf.bufnum, LinLin.kr(controlVal, 0, 1, 5, -5).round(1)).midiratio;
+		sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002)]); //<----not sure if I want this dry/wet signal mixing functionality.....decide...?
+
+		sigOut = FreeVerb.ar(sigOut, mix: rmix, room: room); //?? yes?
+		sigOut = Pan2.ar(sigOut, pan); //?? yes?
+		//sigOut = Splay.ar(sigOut, splay); //not stereo spreader I believe (at least w/ one input...?)
+
+		Out.ar(0, sigOut * amp);
+	}).play(addAction: \addToTail);
+
+	returnSynth;
+};
+//========^^^^^^^^^====SIMPLE TESTS======^^^^^^^^^===============//
+
+
+/*
+//PITCH SHIFTING VOC / WHISTLING <------TRY THESE PARAMETERS
+play({
+    PitchShift.ar(
+        AudioIn.ar([1,2]),    // stereo audio input
+        0.1,             // grain size
+		MouseX.kr(0.25, 3, 1),    //pitchRatio: mod by Weki_Output2 (Relative Pitch Follower)
+		MouseY.kr(0, 0.15), // pitch dispersion: mod/switch case different vals based on WekiOut1, 3, 4?
+		0.002 // time dispersion
+    )
+})
+*/
+//NOT NEEDED ---------vvvvvvvvvvvvvvvvvvvv
+~bus_vocSynthSub = Bus.audio(s, 2); //NOT NEEDED? if not using subMix synths...
+~bus_wislSynthSub = Bus.audio(s, 2); //NOT NEEDED? if not using subMix synths...
+~bus_outMain = Bus.audio(s, 2);  //NOT NEEDED?
+
+~vocSynthSum_mix = Synth(\subMix, [\inBus, ~bus_vocSynthSum, \amp, ~bus_vocAmp.asMap, \outBus, ~bus_outMain/*or just 0???*/]); //voc accomp sum mix synth. NOT NEEDED IF: controlling subSynth levels w/ ~bus_vocAmp and outputting to ~bus_vocSynthSum, OTHERWISE - create additional bus to output to from this synth to use as input bus for ~accomp_mix XFADE synth
+
+~wislSynthSum_mix = Synth(\subMix, [\inBus, ~bus_wislSynthSum, \amp, ~bus_wislAmp.asMap, \outBus, ~bus_outMain]); //whistle accomp sum mix synth. NOT NEEDED IF: controlling subSynth levels w/ ~bus_wislAmp and outputting to ~bus_wislSynthSum, OTHERWISE - create additional bus to output to from this synth to use as input bus for ~accomp_mix XFADE synth
+
+~masterOut = Synth(\subMix, [in: ~bus_outMain, out: 0]); //NEEDED?
+//NOT NEEDED -------^^^^^^^^^^^^^^^
