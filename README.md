@@ -13,6 +13,6 @@
 ---
 This is a work in progress.  It will be enhanced in the future and eventually merged into the [Sonic Mirror](https://github.com/stooby/sonic-mirror) project.
 
-“SCML.scd” is the stable and more user-friendly version of this project. “SCML_dev” is where new features and experimental code will live before being merged into “SCML.scd”
+“SCML.scd” is the stable and more user-friendly version of this project. The ‘dev’ folder is where new features and experimental code will live before being merged into “SCML.scd”
 
 st, 2016
