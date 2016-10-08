@@ -480,14 +480,15 @@ SynthDef.new(\onsets, {
 						var interpSynth, interpVerbRoom, interpVerbMix;
 						~flag_wekSyn_prevIn_change = false;
 						//XFADE ~mixAmount.bus from whistle to voc processing synth busses (1.0 - 0.0)
-						interpSynth = Synth(\LinInterp_num, [\startVal, 1.0, \stopVal, 0.0, \duration, 0.2, \out, ~bus_vocwislMix]);
-						interpVerbRoom = Synth(\LinInterp_num, [\startVal, 0.7, \stopVal, 0.4, \duration, 0.2, \out, ~bus_verbRoom]);
-						interpVerbMix = Synth(\LinInterp_num, [\startVal, 0.6, \stopVal, 0.3, \duration, 0.2, \out, ~bus_verbMix]);
+						interpSynth = Synth(\LinInterp_num, [\startVal, 1, \stopVal, 0, \duration, 0.3, \out, ~bus_vocwislMix]);
+						interpVerbRoom = Synth(\LinInterp_num, [\startVal, 0.7, \stopVal, 0.4, \duration, 0.3, \out, ~bus_verbRoom]);
+						interpVerbMix = Synth(\LinInterp_num, [\startVal, 0.6, \stopVal, 0.3, \duration, 0.3, \out, ~bus_verbMix]);
 						//0.2.yield; //<---CAUSES ERROR b/c "Not in Routine" - worried I'd need this for stability? otherwise routine might just race away and fire off lots of these synths on edge cases?
 
 						~flag_wekSyn_prevIn = 1; //set flag to remember last state before resetting routine
 						//"msg[0] = 1 | prev msg[0] = 1 - STATE CHANGE CONFIRMED".postln;
-						~yieldTime_wsc1 = rate.asFloat; //<---
+						~yieldTime_wsc1 = rate.asFloat;
+						//~yieldTime_wsc1 = 0.31; //precautionary yield time to allow LinInterp synth to finish before resuming routine...thought this helped avoid audio clicks, but don't think it does & it adds latency....
 					} );
 				} );
 			} , { //ELSE======= if msg[0] == 2 "whistling detected"
@@ -510,14 +511,15 @@ SynthDef.new(\onsets, {
 						~flag_wekSyn_prevIn_change = false;
 
 						//XFADE ~mixAmount.bus from voc to whistle processing synth busses (0.0 - 1.0)
-						interpSynth = Synth(\LinInterp_num, [\startVal, 0.0, \stopVal, 1.0, \duration, 0.2, \out, ~bus_vocwislMix]);
-						interpVerbRoom = Synth(\LinInterp_num, [\startVal, 0.4, \stopVal, 0.7, \duration, 0.2, \out, ~bus_verbRoom]);
-						interpVerbMix = Synth(\LinInterp_num, [\startVal, 0.3, \stopVal, 0.6, \duration, 0.2, \out, ~bus_verbMix]);
+						interpSynth = Synth(\LinInterp_num, [\startVal, 0, \stopVal, 1, \duration, 0.3, \out, ~bus_vocwislMix]);
+						interpVerbRoom = Synth(\LinInterp_num, [\startVal, 0.4, \stopVal, 0.7, \duration, 0.3, \out, ~bus_verbRoom]);
+						interpVerbMix = Synth(\LinInterp_num, [\startVal, 0.3, \stopVal, 0.6, \duration, 0.3, \out, ~bus_verbMix]);
 						//0.2.yield; //<---CAUSES ERROR b/c "Not in Routine" - worried I'd need this for stability? otherwise routine might just race away and fire off lots of these synths on edge cases?
 
 						~flag_wekSyn_prevIn = 2; //set flag to remember last state before resetting routine
 						//"msg[0] = 2 | prev msg[0] = 2 - STATE CHANGE CONFIRMED".postln;
 						~yieldTime_wsc1 = rate.asFloat; //<---
+						//~yieldTime_wsc1 = 0.31; //precautionary yield time to allow LinInterp synth to finish before resuming routine...thought this helped avoid audio clicks, but don't think it does & it adds latency....
 					} );
 				} );
 			} );
@@ -528,7 +530,7 @@ SynthDef.new(\onsets, {
 		~yieldTime_wsc1.yieldAndReset; //<---necessary or simply leave as rate.yieldAndReset???
 	});
 };
-
+//~yieldTime_wsc1;
 ~initAutoHT = Routine({
 	~scale1 = Scale.majorPentatonic.degrees; //[0, 2, 4, 7, 9]
 	~scaleBuf = Buffer.alloc(s, ~scale1.size, 1, {|b| b.setnMsg(0, ~scale1) } );
@@ -538,26 +540,24 @@ SynthDef.new(\onsets, {
 	m = Synth(\MFCC, [\input, ~bus_input1, \outBus, ~bus_mfcc]).moveAfter(i);
 	p = Synth(\Pitch, [\input, ~bus_input1, \outBus, ~bus_pitch]).moveAfter(i); //outputs two values (freq)
 
-	"AUDIO IN & FEATURE EXTRACTOR SYNTHS ACTIVE...".postln;
+	//"AUDIO IN & FEATURE EXTRACTOR SYNTHS ACTIVE...".postln;
 
-	0.2.wait;
+	//0.15.wait;
 
 	//TRANSMIT FEATURES
 	~busSum_xin = ~sumFunc_xin.value([~bus_loudness, ~bus_mfcc, ~bus_pitch]); //collect loudness, mfcc, and pitch features to output via OSC to Wekinator
 	~transmit = ~streamFeatures.value(~busSum_xin, ~oscOut_weki, "/wek/inputs", 0.08);
 	SystemClock.play(~transmit);
-	"OSC Out".postln;
+	//"TRANSMITTING FEATURES (OSC OUT)...".postln;
 
-	0.2.wait;
+	//0.15.wait;
 
 	//RECEIVE WEKI OSC OUTPUT
 	~bus_oscIn_1 = ~oscIn_weki_1.value(numIn: 4, defKey: "oscDef1", port: 12000);  //open port to receive OSC output from Wekinator and send to a control bus
 
-	~wekiSynthControl1 = ~routine_wekiSynthControl1.value(oscInBus: ~bus_oscIn_1, rate: 0.1); //create routine to get latest values from OSC input control bus
-	SystemClock.play(~wekiSynthControl1); //start OSC input bus monitoring routine
-	"OSC In".postln;
+	//"OSC-IN Port Ready...".postln;
 
-	0.2.wait;
+	0.15.wait; //voodoo wait... not critical, but including this seems to prevent audio clicks
 
 	~dryIn1 = Synth(\mono2stereo, [\in, ~bus_input1, \amp, ~bus_dryIn1Amp.asMap, \out, 0]).moveAfter(i); //pipe dry mono input to stereo output
 
@@ -567,20 +567,25 @@ SynthDef.new(\onsets, {
 
 	~vocA2 = ~wekiSyn_voc1.value(oscInBus: ~bus_oscIn_1, audioIn: ~bus_input1, audioOut: ~bus_vocSynthSum).moveAfter(~dryIn1); //voc harmonizer 2
 
-	"AutoHarmonizer and AutoTune Synths Active...".postln;
-	0.2.wait;
+	//"AutoHarmonizer and AutoTune Synths Active...".postln;
+	0.15.wait;  //necessary wait
 
 	~dryIn1.set(\amp,  ~bus_dryIn1Amp.asMap);
 	~wisA1.set(\amp, ~bus_wislAmp.asMap);
 	~vocA1.set(\amp, ~bus_vocAmp.asMap);
 	~vocA2.set(\amp, ~bus_vocAmp.asMap);
-	"Configure Synths...".postln;
-	0.2.wait;
+	//"Configure Synths...".postln;
+
+	0.15.wait; //voodoo wait... not critical, but including this seems to prevent audio clicks
 
 	~accomp_mix = Synth(\XFadeStereo, [\in1, ~bus_vocSynthSum, \in2, ~bus_wislSynthSum, \out, 0, \amountControlBus, ~bus_vocwislMix.asMap, \amp, ~bus_accompAmp.asMap], addAction: \addToTail);
 
 	~fx_reverb = Synth(\reverb2x2, [\outBus, 0, \mix, ~bus_verbMix.asMap, \room, ~bus_verbRoom.asMap], addAction: \addToTail); //stereo reverb processing sum output
-	//0.1.yield;
+
+	//--Activate OSC input streaming--
+	~wekiSynthControl1 = ~routine_wekiSynthControl1.value(oscInBus: ~bus_oscIn_1, rate: 0.1); //create routine to get latest values from OSC input control bus
+	SystemClock.play(~wekiSynthControl1); //start OSC input bus monitoring routine
+	//"OSC Input Streaming...".postln;
 	"--AUTOHARMTUNE ACTIVE--".postln;
 });
 
