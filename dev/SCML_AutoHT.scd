@@ -44,7 +44,7 @@ ServerOptions.devices; //evaluate this to see what audio input/output devices ar
 ~bus_rms = Bus.control(s, 1);
 ~bus_mfcc = Bus.control(s, 13);
 ~bus_pitch = Bus.control(s, 2);
-~bus_pitch2 = Bus.control(s, 4);
+~bus_pitch2 = Bus.control(s, 3);
 ~bus_specCent = Bus.control(s, 1);
 ~bus_specFlat = Bus.control(s, 1);
 ~bus_onsets = Bus.control(s, 1);
@@ -60,10 +60,10 @@ ServerOptions.devices; //evaluate this to see what audio input/output devices ar
 ~bus_vocSynthSum = Bus.audio(s, 2);
 ~bus_wislSynthSum = Bus.audio(s, 2);
 
-~bus_dryIn1Amp.set(0.3); //make these static values b/c using SelectX's to control mix levels?
+~bus_dryIn1Amp.set(0.3);
 ~bus_accompAmp.set(1.0);
-~bus_vocAmp.set(0.6); //two voc accomp synths (0.5 x 2 = 1.0)
-~bus_wislAmp.set(1.0); //make these static values b/c using SelectX's to control mix levels?
+~bus_vocAmp.set(0.6); //two voc accomp synths, adjusting levels by ear and monitoring out meter
+~bus_wislAmp.set(1.0);
 ~bus_vocwislMix.set(0.0); //0 = voc accomp only, 1 = whistle accomp only. Set via control routine
 
 ~bus_verbMix.set(0.3);
@@ -87,34 +87,6 @@ SynthDef.new(\reverb2x2, {|outBus, mix = 0.25, room = 0.15, damp = 0.2, amp = 1.
 	ReplaceOut.ar(outBus, sigOut);
 } ).add;
 
-~wekiSyn_voc1b = {|oscInBus, audioIn, audioOut, interval = 5.0, pan = 0.0, amp = 1.0|
-	var numCh, inMsg, sigIn, sigOut, returnSynth, pitchRatio, pitchDisp, panMod;
-
-	numCh = oscInBus.numChannels;
-
-	returnSynth = SynthDef(\vocHarm_weki1, {|interval, pan, amp, mix = 1.0|
-		sigIn = In.ar(audioIn, 1);
-		inMsg = In.kr(oscInBus, numCh);
-
-		pitchRatio = interval.asFloat.round(0.01).midiratio; //set pitch transposition (semi-tone intervals)
-		//pitchDisp = LinLin.kr(inMsg[1], 0, 1, 0, 0.12).round(0.01); //scale weki out1 for pitchDisp val
-
-		sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002)]);
-		//sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, pitchDisp, 0.002)]);
-		//sigOut = FreeVerb.ar(sigOut, mix: 0.33, room: LinLin.kr(inMsg[1], 0, 1, 0.1, 0.4)); //no...make another synth for verb processing sum out...
-
-		//panMod = LinLin.kr(inMsg[1], 0, 1, -0.35, 0.35).round(0.01); //consider
-		//pan = Clip.kr(pan.asFloat + panMod, -0.9, 0.9); //consider
-
-		sigOut = Pan2.ar(sigOut, pan.asFloat); //?? yes?
-		//sigOut = Splay.ar(sigOut, LinLin.kr(inMsg[1], 0, 1, 0, 0.2)); //yea / no?
-
-		Out.ar(audioOut, sigOut * amp);
-	}).play(addAction: \addToTail);
-
-	returnSynth;
-};
-
 ~wekiSyn_voc1 = {//|oscInBus, audioIn, audioOut, interval = 5.0, pan = 0.0, /*scaleBuf,*/ amp = 1.0, mix = 1.0| //FUNCTION ARGS AREN'T BEING TRANSFERED TO SYNTHDEF ARGS !!!!!
 	|oscInBus, audioIn, audioOut|
 	var numCh, inMsg, sigIn, sigOut, returnSynth, pitchRatio, pitchDisp, panMod;
@@ -130,13 +102,37 @@ SynthDef.new(\reverb2x2, {|outBus, mix = 0.25, room = 0.15, damp = 0.2, amp = 1.
 
 		sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002)]);
 		//sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, pitchDisp, 0.002)]);
-		//sigOut = FreeVerb.ar(sigOut, mix: 0.33, room: LinLin.kr(inMsg[1], 0, 1, 0.1, 0.4)); //no...make another synth for verb processing sum out...
 
 		//panMod = LinLin.kr(inMsg[1], 0, 1, -0.35, 0.35).round(0.01); //consider
 		//pan = Clip.kr(pan.asFloat + panMod, -0.9, 0.9); //consider
 
 		sigOut = Pan2.ar(sigOut, pan.asFloat); //?? yes?
-		//sigOut = Splay.ar(sigOut, LinLin.kr(inMsg[1], 0, 1, 0, 0.2)); //yea / no?
+
+		Out.ar(audioOut, sigOut * amp);
+	}).play(addAction: \addToTail);
+
+	returnSynth;
+};
+
+~wekiSyn_voc1b = {|oscInBus, audioIn, audioOut, interval = 5.0, pan = 0.0, amp = 1.0| //testing...don't use...
+	var numCh, inMsg, sigIn, sigOut, returnSynth, pitchRatio, pitchDisp, panMod;
+
+	numCh = oscInBus.numChannels;
+
+	returnSynth = SynthDef(\vocHarm_weki1, {|interval, pan, amp, mix = 1.0|
+		sigIn = In.ar(audioIn, 1);
+		inMsg = In.kr(oscInBus, numCh);
+
+		pitchRatio = interval.asFloat.round(0.01).midiratio; //set pitch transposition (semi-tone intervals)
+		//pitchDisp = LinLin.kr(inMsg[1], 0, 1, 0, 0.12).round(0.01); //scale weki out1 for pitchDisp val
+
+		sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, 0, 0.002)]);
+		//sigOut = SelectX.ar(mix, [sigIn, PitchShift.ar(sigIn, 0.1, pitchRatio, pitchDisp, 0.002)]);
+
+		//panMod = LinLin.kr(inMsg[1], 0, 1, -0.35, 0.35).round(0.01); //consider
+		//pan = Clip.kr(pan.asFloat + panMod, -0.9, 0.9); //consider
+
+		sigOut = Pan2.ar(sigOut, pan.asFloat); //?? yes?
 
 		Out.ar(audioOut, sigOut * amp);
 	}).play(addAction: \addToTail);
@@ -145,7 +141,7 @@ SynthDef.new(\reverb2x2, {|outBus, mix = 0.25, room = 0.15, damp = 0.2, amp = 1.
 };
 
 ~wekiSyn_wisl1 = {//|oscInBus, audioIn, audioOut, scaleBuf, amp = 1.0, mix = 1.0|
-	|oscInBus, audioIn, audioOut, scaleBuf| //add arg for initial interval scale spread of weki output1???? (12 == (-12, 12) | 5 == (-5, 5) | etc...)
+	|oscInBus, audioIn, audioOut, scaleBuf| //add arg for initial interval scale spread of weki output1?? (12 == (-12, 12) | 5 == (-5, 5) | etc...)
 	var numCh, inMsg, sigIn, sigOut, returnSynth, pitchRatio, pitchDisp;
 
 	numCh = oscInBus.numChannels;
@@ -203,11 +199,12 @@ SynthDef.new(\monAudioInput, {
 	OffsetOut.ar(outBus, sig);
 }).add;
 
-SynthDef.new(\monAudioInFFT, {//considering this as a way to use only one buffer to store FFT analysis, and have other feature extraction synths receive input from said FFT buffer.  Could be useful to increase CPU efficiency, but helpfile advises against this...
+SynthDef.new(\monAudioInFFT, {//considering this as a way to use only one buffer to store FFT analysis, and have other feature extraction synths receive input from said FFT buffer. Think it could be more efficient, but helpfile advises against this...
 	arg inChannel = 0, amp = 1, buffer, outBus;
 	var sig, fft;
 	sig = SoundIn.ar(bus: inChannel, mul: amp);
-	fft = FFT(buffer, sig, wintype: 1); //<--and then how should other synths access this fft buffer???
+	fft = FFT(buffer, sig, wintype: 1);
+	//~audioIn1FFTbuf.set(fft); //buf doesn't exist yet, still need to test to see if this would work...
 	OffsetOut.ar(outBus, sig);
 }).add;
 
@@ -232,6 +229,17 @@ SynthDef.new(\RMS, {
 	Out.kr(outBus, rms);
 }).add;
 
+SynthDef.new(\Pitch, {
+	arg input, ampThresh = 0.04, median = 7, minFreq = 60, maxFreq = 4000, outBus;
+	var sigIn, freq, hasFreq;
+	sigIn = In.ar(input);
+    # freq, hasFreq = Pitch.kr(sigIn, ampThreshold: ampThresh, median: median, minFreq: minFreq, maxFreq: maxFreq);
+    //freq = Lag.kr(freq.cpsmidi.round(1).midicps, 0.05);
+	Out.kr(outBus, [freq, hasFreq]);
+    //freq.poll(trig: 10, label: "Freq");
+	//hasFreq.poll(trig: 10, label: "HasFreq");
+}).add;
+
 SynthDef.new(\Pitch2, {
 	arg input, ampThresh = 0.04, median = 7, minFreq = 60, maxFreq = 4000, outBus;
 	var sigIn, freq, hasFreq, midinote;
@@ -240,17 +248,6 @@ SynthDef.new(\Pitch2, {
 	//midinote = Lag.kr(freq.cpsmidi.round(1), 0.05);
 	midinote = freq.cpsmidi.round(1);
 	Out.kr(outBus, [freq, hasFreq, midinote]);
-    //freq.poll(trig: 10, label: "Freq");
-	//hasFreq.poll(trig: 10, label: "HasFreq");
-}).add;
-
-SynthDef.new(\Pitch, {
-	arg input, ampThresh = 0.04, median = 7, minFreq = 60, maxFreq = 4000, outBus;
-	var sigIn, freq, hasFreq;
-	sigIn = In.ar(input);
-    # freq, hasFreq = Pitch.kr(sigIn, ampThreshold: ampThresh, median: median, minFreq: minFreq, maxFreq: maxFreq);
-    //freq = Lag.kr(freq.cpsmidi.round(1).midicps, 0.05);
-	Out.kr(outBus, [freq, hasFreq]);
     //freq.poll(trig: 10, label: "Freq");
 	//hasFreq.poll(trig: 10, label: "HasFreq");
 }).add;
@@ -321,46 +318,48 @@ SynthDef.new(\onsets, {
 	outBus; //return new bus w/ concat values of all input busses in arg array
 };
 
-~getSend_busSum = {arg bus, netAdr, oscMsg;
+~getSend_busSum = {|bus, netAdr, oscMsg, post = 0|
 	var numCh = bus.numChannels; //needed for message posting...
 	bus.get( {arg val; { //<---changing to getSynchronous prevents OSC output for some reason...?
 		netAdr.sendMsg(*[oscMsg] ++ val); //transmit feature vals via OSC
-		/*switch (bus, //monitor feature values in SC (can be commented out to reduce CPU)
-			~busSum_ldns_mfcc, {
-				("Loudness:" + val[0].round(0.0001)).postln;
-				("MFCC:" + val[1..13].round(0.0001)).postln;
-				("-------").postln;
-			},
-			~busSum_ldns_sFlat_sCent, {
-				("Loudness:" + val[0].round(0.0001)).postln;
-				("Flatness:" + val[1].round(0.0001)).postln;
-				("Centroid:" + val[2].round(0.0001)).postln;
-				("-------").postln;
-			},
-			~busSum_ldns_pitch, {
-				("Loudness:" + val[0].round(0.0001)).postln;
-				("Pitch-freq:" + val[1].round(0.01)).postln;
-				("Pitch-hasFreq?:" + val[2]).postln;
-				("Pitch-MIDInote:" + val[3]).postln;
-				("-------").postln;
-			},
-			{//all other busses (cases)
-				if (numCh > 1,
-					{
-						numCh.do({arg item; ("Feature_" ++ (item + 1) ++ ":" + val[item].round(0.0001)).postln;});
-						("-------").postln;
-					},
-					{("Feature_1:" + val.round(0.0001)).postln;} //else
-				);
-			}
-		); */
+		if (post == 1, { //monitor feature values in SC post window
+			switch (bus,
+				~busSum_ldns_mfcc, {
+					("Loudness:" + val[0].round(0.0001)).postln;
+					("MFCC:" + val[1..13].round(0.0001)).postln;
+					("-------").postln;
+				},
+				~busSum_ldns_sFlat_sCent, {
+					("Loudness:" + val[0].round(0.0001)).postln;
+					("Flatness:" + val[1].round(0.0001)).postln;
+					("Centroid:" + val[2].round(0.0001)).postln;
+					("-------").postln;
+				},
+				~busSum_ldns_pitch, {
+					("Loudness:" + val[0].round(0.0001)).postln;
+					("Pitch-freq:" + val[1].round(0.01)).postln;
+					("Pitch-hasFreq?:" + val[2]).postln;
+					("Pitch-MIDInote:" + val[3]).postln;
+					("-------").postln;
+				},
+				{//all other busses (cases)
+					if (numCh > 1,
+						{
+							numCh.do({arg item; ("Feature_" ++ (item + 1) ++ ":" + val[item].round(0.0001)).postln;});
+							("-------").postln;
+						},
+						{("Feature_1:" + val.round(0.0001)).postln;} //else
+					);
+				}
+			);
+		} );
 	}.defer; } );
 };
 
 ~streamFeatures = {
-	arg bus, netAdr, oscMsg, rate = 0.04;
+	|bus, netAdr, oscMsg, rate = 0.04, post = 0|
 	Routine ( {
-		~getSend_busSum.value(bus, netAdr, oscMsg);
+		~getSend_busSum.value(bus, netAdr, oscMsg, post);
 		rate.yieldAndReset;
 	} );
 };
@@ -530,7 +529,7 @@ SynthDef.new(\onsets, {
 		~yieldTime_wsc1.yieldAndReset; //<---necessary or simply leave as rate.yieldAndReset???
 	});
 };
-//~yieldTime_wsc1;
+
 ~initAutoHT = Routine({
 	~scale1 = Scale.majorPentatonic.degrees; //[0, 2, 4, 7, 9]
 	~scaleBuf = Buffer.alloc(s, ~scale1.size, 1, {|b| b.setnMsg(0, ~scale1) } );
@@ -620,7 +619,7 @@ p.free;
 ~wekiSynthControl1.free;
 OSCdef(\oscDef1).free;
 
-s.freeAll;
+s.freeAll; //don't use when integrated into main SCML .scd....otherwise feature Xtractor synths will be freed too
 )
 
 s.quit; //shut down the server before exiting SuperCollider
