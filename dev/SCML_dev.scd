@@ -2,7 +2,6 @@
 //new features and experimental code goes here before being merged into "SCML"
 
 ( //#1 ======INITIALIZE SC SERVER ======
-//if the server fails to boot, try, try again. It's stubborn sometimes. Alternatively, evaluate each line one-by-one for a more stable bootup.
 o = Server.local.options;
 o.sampleRate = 44100;
 o.blockSize = 512;
@@ -16,9 +15,9 @@ ServerOptions.devices; //evaluate this to see what audio input/output devices ar
 ( //#2 ======SETUP======
 
 //OSC In/Out ----------
-~oscOut_weki = NetAddr("127.0.0.1", 6448); //configure connection to default Wekinator input port
+~oscOut_weki = NetAddr("127.0.0.1", 6448); //<---OSC OUTPUT HOST & PORT CONFIG SETTINGS (currently set to default Wekinator input port)
 
-~oscIn_weki_1 = {|numIn, defKey, port = 12000|
+~oscIn_weki_1 = {|numIn, defKey, port = 12000| //<---OSC INPUT CONFIG SETTINGS (currently set to default Wekinator output port)
 	var outBus;
 	outBus = Bus.control(s, numIn);
 
@@ -67,7 +66,6 @@ ServerOptions.devices; //evaluate this to see what audio input/output devices ar
 ~bus_vocAmp.set(0.6); //two voc accomp synths, adjusting levels by ear and monitoring out meter
 ~bus_wislAmp.set(1.0);
 ~bus_vocwislMix.set(0.0); //0 = voc accomp only, 1 = whistle accomp only. Set via control routine
-
 ~bus_verbMix.set(0.3);
 ~bus_verbRoom.set(0.4);
 
@@ -292,7 +290,7 @@ SynthDef.new(\onsets, {
 	arg input, outBus, threshold = 0.5, trigtime = 0.1, odtype = \rcomplex, reltime = 1.0, floor = 0.1;
 	var sigIn, fft, onsets, trigger;
 	sigIn = In.ar(input);
-	fft = FFT(LocalBuf(512), sigIn, wintype: 1);
+	fft = FFT(LocalBuf(1024), sigIn, wintype: 1);
 	onsets = Onsets.kr(fft, threshold, odtype, reltime, floor);
 	trigger = EnvGen.kr(Env([1, 1, 0], [0, trigtime], curve: \hold), onsets); //after onset is detected, send trigger value of '1'  for 'trigtime' seconds to control bus
 	//trigger.poll(10, label: 'trig'); //uncomment this to monitor trigger val constantly
@@ -344,6 +342,12 @@ SynthDef.new(\onsets, {
 					("Pitch-MIDInote:" + val[3]).postln;
 					("-------").postln;
 				},
+				~busSum_ldns_sFlat_onset, {
+					("Loudness:" + val[0].round(0.0001)).postln;
+					("Flatness:" + val[1].round(0.0001)).postln;
+					("Onset Detected:" + val[2]).postln;
+					("-------").postln;
+				},
 				{//all other busses (cases)
 					if (numCh > 1,
 						{
@@ -387,12 +391,176 @@ SynthDef.new(\onsets, {
 ~flag_wekSyn_prevIn_change = false; //flag for debouncing sudden changes due to input noise
 ~flag_wekSyn_prevVow = 1; //flag for storing last input from WekiOut3, 1 == ah, 2 == eh, 3 == ee, 4 == oh, 5 == oo
 ~flag_wekSyn_prevVow_change = false; //flag for debouncing sudden changes due to input noise
-~yieldTime_wsc1 = 0.1;
-~debounceTime = 0.3;
+~yieldTime_wsc1 = 0.1; //in seconds
+~debounceTime = 0.3; //(in seconds) increase or reduce this value for less or more jittery parameter change response, respectively (higher value causes more delay in parameter changes after detected changes in sound, but may yield more accurate performance...the accuracy of trained Wekinator models is also a factor)
 
-~routine_wekiSynthControl1 = {|oscInBus, rate = 0.1|
+~routine_wekiSynthControl1 = {|oscInBus, rate = 0.1| //<---new version w/ debounce for vowel detection
 	Routine ({
-		//~yieldTime_wsc1 = rate.asFloat; //<---necessary?
+		oscInBus.get({ |msg|
+			if (msg[0] == 1, { //"voc detected"
+				if (~flag_wekSyn_prevIn == 1, { //sound source has not changed since prev bus.get
+					var x;
+					~flag_wekSyn_prevIn_change = false; //reset debounce flag in case it was previously triggered
+					//"msg[0] = 1 - NO CHANGE".postln;
+
+					x = case //MONITOR CHANGES IN msg[2] <<<<<<<<
+					{msg[2] == 1} {//if msg[2] == 1 - 'AH' DETECTED
+						if (~flag_wekSyn_prevVow == 1, { //msg[2] has not changed since prev bus.get
+							~flag_wekSyn_prevVow_change = false; //reset flag if it was triggered by noise
+							~yieldTime_wsc1 = rate.asFloat; //<---
+						} , { //else if ~flag_prevVow != 1, maybe we're changing vowels
+							if (~flag_wekSyn_prevVow_change == false, { //DEBOUNCE
+								~flag_wekSyn_prevVow_change = true;
+								"msg[2] = 1 | prev msg[2] = ? - STATE CHANGE TEST".postln;
+								~yieldTime_wsc1 = ~debounceTime;
+							}, { //else if ~flag_stateChange == true, state has changed and remained same long enough to rule out noise, and we can proceed with triggered changes
+								~flag_wekSyn_prevVow_change = false;
+								~flag_wekSyn_prevVow = 1; //set flag to remember last state before resetting routine
+								"msg[2] = 1 | prev msg[2] = ? - STATE CHANGE CONFIRMED".postln;
+								"SINGING DETECTED: AH | msg[2] = 1".postln;
+								~vocA1.set(\interval, -5, \pan, -0.75);
+								~vocA2.set(\interval, 4.25, \pan, 0.75);
+								~yieldTime_wsc1 = rate.asFloat; //<---
+							} );
+						} );
+					}
+					{msg[2] == 2} {//if msg[2] == 2 - 'EH' DETECTED
+						if (~flag_wekSyn_prevVow == 2, { //msg[2] has not changed since prev bus.get
+							~flag_wekSyn_prevVow_change = false; //reset flag if it was triggered by noise
+							~yieldTime_wsc1 = rate.asFloat; //<---
+						} , { //else if ~flag_prevVow != 2, maybe we're changing vowels
+							if (~flag_wekSyn_prevVow_change == false, { //DEBOUNCE
+								~flag_wekSyn_prevVow_change = true;
+								"msg[2] = 2 | prev msg[2] = ? - STATE CHANGE TEST".postln;
+								~yieldTime_wsc1 = ~debounceTime;
+							}, { //else if ~flag_stateChange == true, state has changed and remained same long enough to rule out noise, and we can proceed with triggered changes
+								~flag_wekSyn_prevVow_change = false;
+								~flag_wekSyn_prevVow = 2; //set flag to remember last state before resetting routine
+								"msg[2] = 2 | prev msg[2] = ? - STATE CHANGE CONFIRMED".postln;
+								"SINGING DETECTED: EH | msg[2] = 2".postln;
+								~vocA1.set(\interval, -3, \pan, -0.6);
+								~vocA2.set(\interval, 5, \pan, 0.6);
+								~yieldTime_wsc1 = rate.asFloat; //<---
+							} );
+						} );
+					}
+					{msg[2] == 3} {//if msg[2] == 3 - 'EE'
+						if (~flag_wekSyn_prevVow == 3, { //msg[2] has not changed since prev bus.get
+							~flag_wekSyn_prevVow_change = false; //reset flag if it was triggered by noise
+							~yieldTime_wsc1 = rate.asFloat; //<---
+						} , { //else if ~flag_prevVow != 3, maybe we're changing vowels
+							if (~flag_wekSyn_prevVow_change == false, { //DEBOUNCE
+								~flag_wekSyn_prevVow_change = true;
+								"msg[2] = 3 | prev msg[2] = ? - STATE CHANGE TEST".postln;
+								~yieldTime_wsc1 = ~debounceTime;
+							}, { //else if ~flag_stateChange == true, state has changed and remained same long enough to rule out noise, and we can proceed with triggered changes
+								~flag_wekSyn_prevVow_change = false;
+								~flag_wekSyn_prevVow = 3; //set flag to remember last state before resetting routine
+								"msg[2] = 3 | prev msg[2] = ? - STATE CHANGE CONFIRMED".postln;
+								"SINGING DETECTED: EE | msg[2] = 3".postln;
+								~vocA1.set(\interval, -4, \pan, -0.45);
+								~vocA2.set(\interval, 10, \pan, 0.45);
+								~yieldTime_wsc1 = rate.asFloat; //<---
+							} );
+						} );
+					}
+					{msg[2] == 4} {//if msg[2] == 4 - 'OH'
+						if (~flag_wekSyn_prevVow == 4, { //msg[2] has not changed since prev bus.get
+							~flag_wekSyn_prevVow_change = false; //reset flag if it was triggered by noise
+							~yieldTime_wsc1 = rate.asFloat; //<---
+						} , { //else if ~flag_prevVow != 4, maybe we're changing vowels
+							if (~flag_wekSyn_prevVow_change == false, { //DEBOUNCE
+								~flag_wekSyn_prevVow_change = true;
+								"msg[2] = 4 | prev msg[2] = ? - STATE CHANGE TEST".postln;
+								~yieldTime_wsc1 = ~debounceTime;
+							}, { //else if ~flag_stateChange == true, state has changed and remained same long enough to rule out noise, and we can proceed with triggered changes
+								~flag_wekSyn_prevVow_change = false;
+								~flag_wekSyn_prevVow = 4; //set flag to remember last state before resetting routine
+								"msg[2] = 4 | prev msg[2] = ? - STATE CHANGE CONFIRMED".postln;
+								"SINGING DETECTED: OH | msg[2] = 4".postln;
+								~vocA1.set(\interval, -3, \pan, -0.6);
+								~vocA2.set(\interval, 7, \pan, 0.6);
+								~yieldTime_wsc1 = rate.asFloat; //<---
+							} );
+						} );
+					}
+					{msg[2] == 5} {//if msg[2] == 5 'OO'
+						if (~flag_wekSyn_prevVow == 5, { //msg[2] has not changed since prev bus.get
+							~flag_wekSyn_prevVow_change = false; //reset flag if it was triggered by noise
+							~yieldTime_wsc1 = rate.asFloat; //<---
+						} , { //else if ~flag_prevVow != 5, maybe we're changing vowels
+							if (~flag_wekSyn_prevVow_change == false, { //DEBOUNCE
+								~flag_wekSyn_prevVow_change = true;
+								"msg[2] = 5 | prev msg[2] = ? - STATE CHANGE TEST".postln;
+								~yieldTime_wsc1 = ~debounceTime;
+							}, { //else if ~flag_stateChange == true, state has changed and remained same long enough to rule out noise, and we can proceed with triggered changes
+								~flag_wekSyn_prevVow_change = false;
+								~flag_wekSyn_prevVow = 5; //set flag to remember last state before resetting routine
+								"msg[2] = 5 | prev msg[2] = ? - STATE CHANGE CONFIRMED".postln;
+								"SINGING DETECTED: OO | msg[2] = 5".postln;
+								~vocA1.set(\interval, -4, \pan, -0.25);
+								~vocA2.set(\interval, 5, \pan, 0.25);
+								~yieldTime_wsc1 = rate.asFloat; //<---
+							} );
+						} );
+					};
+					//~yieldTime_wsc1 = rate.asFloat; //<---
+				} , { //else ~flag_wekSyn_prevIn == 2, we're changing from  "2 - whistling" to "1 - voc"
+					//CHECK TO SEE IF TIME THRESHOLD SURPASSED BEFORE CONFIRMING STATE CHANGE
+					if (~flag_wekSyn_prevIn_change == false, {
+						~flag_wekSyn_prevIn_change = true;
+						//"msg[0] = 1 | prev msg[0] = 2 - STATE CHANGE TEST".postln;
+						~yieldTime_wsc1 = ~debounceTime; //"debounce" time
+					}, { //else if ~flag_stateChange == true, state has changed and remained same long enough to rule out noise, and we can proceed with triggered changes
+						var interpSynth, interpVerbRoom, interpVerbMix;
+						~flag_wekSyn_prevIn_change = false;
+						//XFADE ~mixAmount.bus from whistle to voc processing synth busses (1.0 - 0.0)
+						interpSynth = Synth(\LinInterp_num, [\startVal, 1, \stopVal, 0, \duration, 0.3, \out, ~bus_vocwislMix]);
+						interpVerbRoom = Synth(\LinInterp_num, [\startVal, 0.7, \stopVal, 0.4, \duration, 0.3, \out, ~bus_verbRoom]);
+						interpVerbMix = Synth(\LinInterp_num, [\startVal, 0.6, \stopVal, 0.3, \duration, 0.3, \out, ~bus_verbMix]);
+						~flag_wekSyn_prevIn = 1; //set flag to remember last state before resetting routine
+						//"msg[0] = 1 | prev msg[0] = 1 - STATE CHANGE CONFIRMED".postln;
+						"SINGING DETECTED--AUTO-HARMONIZE MODE ACTIVE".postln;
+						~yieldTime_wsc1 = rate.asFloat;
+						//~yieldTime_wsc1 = 0.31; //precautionary yield time to allow LinInterp synth to finish before resuming routine...thought this helped avoid audio clicks, but don't think it does & it adds latency....
+					} );
+				} );
+			} , { //ELSE======= if msg[0] == 2 "whistling detected"
+				if (~flag_wekSyn_prevIn == 2, { //sound source has not changed since prev bus.get
+					~flag_wekSyn_prevIn_change = false; //reset debounce flag
+					//"msg[0] = 2 - NO CHANGE".postln;
+					~yieldTime_wsc1 = rate.asFloat; //<----
+				} , { //else flag must have changed recently from "1 - voc" to "2 - whistling"
+					//CHECK TO SEE IF TIME THRESHOLD SURPASSED BEFORE CONFIRMING STATE CHANGE
+					if (~flag_wekSyn_prevIn_change == false, {
+						~flag_wekSyn_prevIn_change = true;
+						//"msg[0] = 2 | prev msg[0] = 1 - STATE CHANGE TEST".postln;
+						~yieldTime_wsc1 = ~debounceTime; //"debounce" time <---
+					}, { //else if ~flag_stateChange == true, state has changed and remained same long enough to rule out noise, and we can proceed with triggered changes
+						var interpSynth, interpVerbRoom, interpVerbMix;
+						~flag_wekSyn_prevIn_change = false;
+						//XFADE ~mixAmount.bus from voc to whistle processing synth busses (0.0 - 1.0)
+						interpSynth = Synth(\LinInterp_num, [\startVal, 0, \stopVal, 1, \duration, 0.3, \out, ~bus_vocwislMix]);
+						interpVerbRoom = Synth(\LinInterp_num, [\startVal, 0.4, \stopVal, 0.7, \duration, 0.3, \out, ~bus_verbRoom]);
+						interpVerbMix = Synth(\LinInterp_num, [\startVal, 0.3, \stopVal, 0.6, \duration, 0.3, \out, ~bus_verbMix]);
+						~flag_wekSyn_prevIn = 2; //set flag to remember last state before resetting routine
+						//"msg[0] = 2 | prev msg[0] = 2 - STATE CHANGE CONFIRMED".postln;
+						"WHISTLING DETECTED--AUTO-TUNE MODE ACTIVE".postln;
+						~yieldTime_wsc1 = rate.asFloat; //<---
+						//~yieldTime_wsc1 = 0.31; //precautionary yield time to allow LinInterp synth to finish before resuming routine...thought this helped avoid audio clicks, but don't think it does & it adds latency....
+					} );
+				} );
+			} );
+		});
+		//"Out of .get, before slight .yield".postln;
+		0.02.yield; //<-----ANY OTHER WAY W/OUT INDUCING LATENCY!??????
+		//	("yieldTime_wsc1 = " ++ ~yieldTime_wsc1).postln;
+		~yieldTime_wsc1.yieldAndReset;
+	});
+};
+
+/*~routine_wekiSynthControl1 = {|oscInBus, rate = 0.1|
+	Routine ({
 		oscInBus.get({ |msg|
 			if (msg[0] == 1, { //"voc detected"
 				if (~flag_wekSyn_prevIn == 1, { //sound source has not changed since prev bus.get
@@ -530,7 +698,7 @@ SynthDef.new(\onsets, {
 	//	("yieldTime_wsc1 = " ++ ~yieldTime_wsc1).postln;
 		~yieldTime_wsc1.yieldAndReset; //<---necessary or simply leave as rate.yieldAndReset???
 	});
-};
+}; */
 
 ~initAutoHT = Routine({
 	~scale1 = Scale.majorPentatonic.degrees; //[0, 2, 4, 7, 9]
@@ -593,7 +761,7 @@ SynthDef.new(\onsets, {
 )
 
 // #3 ======ACTIVATE WEKI INSTRUMENT EXAMPLE #1 (Auto-harmonize & Auto-tune) ======
-SystemClock.play(~initAutoHT); //START AUTOHARMONIZER-TUNER <--
+SystemClock.play(~initAutoHT);
 
 // #4 --- STOP / CLEANUP INSTRUMENT EXAMPLE #1 ---
 (
@@ -623,8 +791,6 @@ OSCdef(\oscDef1).free;
 
 s.freeAll; //don't use when integrated into main SCML .scd....otherwise feature Xtractor synths will be freed too
 )
-
-
 
 
 //////////////////////////////////////////////////////////////
@@ -682,10 +848,10 @@ SystemClock.play(~transmit);
 ~sumSyn_xin.free;
 ~busSum_ldns_sFlat_sCent.free;
 )
-s.plotTree;
-(//TRANSMIT LOUDNESS AND PITCH - (3 features: )
-~busSum_ldns_pitch = ~sumFunc_xin.value( [~bus_loudness, ~bus_pitch] ); //3 features [loudness, freq, hasFreq?]
-//~busSum_ldns_pitch = ~sumFunc_xin.value( [~bus_loudness, ~bus_pitch2] ); //4 features [loudness, freq, hasFreq?, MIDI note]
+
+(//TRANSMIT LOUDNESS AND PITCH
+~busSum_ldns_pitch = ~sumFunc_xin.value( [~bus_loudness, ~bus_pitch] ); //3 features [loudness, freq, hasFreq]
+//~busSum_ldns_pitch = ~sumFunc_xin.value( [~bus_loudness, ~bus_pitch2] ); //4 features [loudness, freq, hasFreq, MIDI note]
 ~transmit = ~streamFeatures.value(~busSum_ldns_pitch, ~oscOut_weki, "/wek/inputs", rate: 0.1, post: 1);
 SystemClock.play(~transmit);
 )
@@ -704,17 +870,6 @@ SystemClock.play(~transmit);
 ~transmit.stop;
 ~sumSyn_xin.free;
 ~busSum_ldns_sFlat_onset.free;
-)
-
-(//TRANSMIT LOUDNESS, SPECTRAL FLATNESS, SPECTRAL CENTROID, PITCH - (5 features)
-~busSum_ldns_sFlat_pitch_sCent = ~sumFunc_xin.value( [~bus_loudness, ~bus_specFlat, ~bus_specCent, ~bus_pitch] );
-~transmit = ~streamFeatures.value(~busSum_ldns_sFlat_pitch_sCent, ~oscOut_weki, "/wek/inputs", 0.04);
-SystemClock.play(~transmit);
-)
-(//STOP transmitting
-~transmit.stop;
-~sumSyn_xin.free;
-~busSum_ldns_sFlat_pitch_sCent.free;
 )
 
 (//TRANSMIT FEATURES - Loudness, Flatness, Pitch[2]  (variable size feature bus set)
