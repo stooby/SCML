@@ -1,9 +1,6 @@
 //************************ SCML (SuperCollider Machine Listening) ************************
 
-//------> INSTRUCTIONS<------UPDATE <-------------------------!!!!!!!!!!!!!!!!!!!!
-//    • Evaluate the below blocks of code in order, one at a time from #1 - #4 to boot the server, analyze your computer's default audio input, and transmit extracted features via OSC.
-//    • Evaluate the "CLEANUP" code at the bottom before quitting SuperCollider.
-
+//SEE THE README FOR OPERATING INSTRUCTIONS
 
 ( //#1 ======INITIALIZE SC SERVER ======
 //if server fails to start and error encountered:  try, try again...it's stubborn sometimes...
