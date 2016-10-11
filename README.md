@@ -43,13 +43,15 @@ If you want to run the machine-learning-controlled instrument examples:
 
 * B. If you don’t want to run the example instrument in conjunction with Wekinator, and simply want to output audio feature data via OSC:
 
-	B1. Configure the OSC Output Host and Port address values in the first line of the code at the top of chunk #2.  (Alternatively, configure the OSC input settings in your external programming environment / software to match these values).
+	B1. Configure the OSC Output Host and Port address values in the first line of code at the top of chunk #2 to match the OSC input address and port of whatever you’re sending OSC data to.  (Alternatively, leave this is as and configure the OSC input settings in your external programming environment / software to match these values).
 
-	B2. Skip over chunks #3 and #4 and evaluate chunk “B” within the “Custom Configuration” portion of the code. This will activate input monitoring of your system’s first audio input channel as well as a variety of audio feature extractor “synths.”
+	B2. Evaluate chunk #2.
 
-	B3. Below chunk “B” within the “Output Audio Features via OSC” section, evaluate individual “TRANSMIT” chunks to output various combinations of audio feature data via OSC.  Be sure to evaluate corresponding “STOP” chunks before attempting to transmit alternate feature sets.
+	B3. Skip over chunks #3 and #4 and evaluate chunk “B” within the “Custom Configuration” portion of the code. This will activate input monitoring of your system’s first audio input channel as well as a variety of audio feature extractor “synths.”
 
-	B4. When you’re finished, evaluate the “CLEANUP” chunk and shutdown the server before quitting SuperCollider.
+	B4. Below chunk “B” within the “Output Audio Features via OSC” section, evaluate individual “TRANSMIT” chunks to output various combinations of audio feature data via OSC.  Be sure to evaluate corresponding “STOP” chunks before attempting to transmit alternate feature sets.
+
+	B5. When you’re finished, evaluate the “CLEANUP” chunk and shutdown the server before quitting SuperCollider.
 
 ### Notes about Wekinator and the included Wekinator project files:
 
