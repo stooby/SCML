@@ -45,7 +45,7 @@ If you want to run the machine-learning-controlled instrument examples:
 
 * B. If you don’t want to run the example instrument in conjunction with Wekinator, and simply want to output audio feature data via OSC:
 
-	B1. Configure the OSC Output Host and Port address values in the first line of code at the top of chunk #2 to match the OSC input address and port of whatever you’re sending OSC data to.  (Alternatively, leave this is as and configure the OSC input settings in your external programming environment / software to match these values).
+	B1. Configure the OSC Output Host and Port address values in the first line of code at the top of chunk #2 to match the OSC input address and port of whatever you’re sending OSC data to.  (Alternatively, leave this as is and configure the OSC input settings in your external programming environment / software to match these values).
 
 	B2. Evaluate chunk #2.
 
