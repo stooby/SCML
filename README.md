@@ -31,13 +31,15 @@ If you want to run the machine-learning-controlled instrument examples:
 
 	A1. With the SC server booted, evaluate chunk #2.
 
-	A2. Launch WekiInputHelper and open the WekiInputHelper file included in the “WekinatorProjectFiles” folder. Click “Start Listening” and click on the “Send and Monitor” tab.
+	A2. Launch WekiInputHelper and open the “VocWhistle_inpHelp.inputproj” file included in the “WekinatorProjectFiles” folder. Click “Start Listening” and click on the “Send and Monitor” tab.
 
-	A3. Launch Wekinator and open the Wekinator project file included in the “WekinatorProjectFiles” folder. Click “Start Listening” and “Run.”
+	A3. Launch Wekinator and open the “VocWhistle_ld-mfcc-pitch_1.wekproj” project file included in the “WekinatorProjectFiles” folder. Click “Start Listening” and “Run.”
 
 	A4. Within the “SCML.scd” file in SuperCollider, evaluate item #3 to activate the auto-harmonizer & auto-tuner instrument example.
-		- You should hear the auto-harmonizer processing your voice when you sing into the mic. Singing different vowels (AH, EH, EE, OH, OO) will change the harmonizer chord presets.
-		- Whistling will switch the instrument into ‘auto-tune’ mode.
+
+	- You should hear the auto-harmonizer processing your voice when you sing into the mic. Singing different vowels (AH, EH, EE, OH, OO) will change the harmonizer chord presets.
+
+	- Whistling will switch the instrument into ‘auto-tune’ mode.
 
 	A5. When you’re done, evaluate chunk #4 to shutdown this instrument example. (You can re-evaluate item #3 to restart the instrument after it’s been shutdown.)
 
