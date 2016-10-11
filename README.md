@@ -28,6 +28,7 @@ If you want to run the machine-learning-controlled instrument examples:
 
 * A. If you want to run the example instrument in conjunction with the Wekinator machine learning software:
 	- RECOMMENDED: Monitor your system’s audio output with headphones to avoid audio feedback.
+
 	A1. With the SC server booted, evaluate chunk #2.
 
 	A2. Launch WekiInputHelper and open the WekiInputHelper file included in the “WekinatorProjectFiles” folder. Click “Start Listening” and click on the “Send and Monitor” tab.
@@ -41,9 +42,13 @@ If you want to run the machine-learning-controlled instrument examples:
 	A5. When you’re done, evaluate chunk #4 to shutdown this instrument example. (You can re-evaluate item #3 to restart the instrument after it’s been shutdown.)
 
 * B. If you don’t want to run the example instrument in conjunction with Wekinator, and simply want to output audio feature data via OSC:
+
 	B1. Configure the OSC Output Host and Port address values in the first line of the code at the top of chunk #2.  (Alternatively, configure the OSC input settings in your external programming environment / software to match these values).
+
 	B2. Skip over chunks #3 and #4 and evaluate chunk “B” within the “Custom Configuration” portion of the code. This will activate input monitoring of your system’s first audio input channel as well as a variety of audio feature extractor “synths.”
+
 	B3. Below chunk “B” within the “Output Audio Features via OSC” section, evaluate individual “TRANSMIT” chunks to output various combinations of audio feature data via OSC.  Be sure to evaluate corresponding “STOP” chunks before attempting to transmit alternate feature sets.
+
 	B4. When you’re finished, evaluate the “CLEANUP” chunk and shutdown the server before quitting SuperCollider.
 
 ### Notes about Wekinator and the included Wekinator project files:
