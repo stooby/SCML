@@ -3,10 +3,11 @@
 
 ( //#1 ======INITIALIZE SC SERVER ======
 o = Server.local.options;
-o.sampleRate = 44100;
+//o.sampleRate = 44100;
+o.sampleRate = 48000;
 o.blockSize = 512;
-o.inDevice = nil; //use system default audio input (change value to manually configure input)
-o.outDevice = nil; //use system default audio output (change value to manually configure output)
+o.inDevice = "iConnectAudio4+"; //use system default audio input (change value to manually configure input)
+o.outDevice = "iConnectAudio4+"; //use system default audio output (change value to manually configure output)
 s.latency = 0.05; //0.2 is SC default
 s.boot;
 )
@@ -292,7 +293,7 @@ SynthDef.new(\onsets, {
 	sigIn = In.ar(input);
 	fft = FFT(LocalBuf(1024), sigIn, wintype: 1);
 	onsets = Onsets.kr(fft, threshold, odtype, reltime, floor);
-	trigger = EnvGen.kr(Env([1, 1, 0], [0, trigtime], curve: \hold), onsets); //after onset is detected, send trigger value of '1'  for 'trigtime' seconds to control bus
+	trigger = Trig1.kr(onsets, trigtime);  //if onset detected, send output 1 for trigtime seconds to control bus
 	//trigger.poll(10, label: 'trig'); //uncomment this to monitor trigger val constantly
 	Out.kr(outBus, trigger);
 }).add;
@@ -821,14 +822,14 @@ f = Synth(\specFlat, [\input, ~bus_input1, \outBus, ~bus_specFlat]).moveAfter(i)
 n = Synth(\onsets, [\input, ~bus_input1, \outBus, ~bus_onsets, \threshold, 0.7]).moveAfter(i);
 n.set(\threshold, 0.5); //evaluate to change detection threshold (between 0 - 1)
 
-
+s.plotTree;
 //#4 ======OUTPUT AUDIO FEATURES VIA OSC======
 
 // Default OSC output (~oscOut_weki): IP - 127.0.0.1,  Port # 6448
 
 (//TRANSMIT LOUDNESS AND MFCCs - (14 features)
 ~busSum_ldns_mfcc = ~sumFunc_xin.value( [~bus_loudness, ~bus_mfcc] );
-~transmit = ~streamFeatures.value(~busSum_ldns_mfcc, ~oscOut_weki, "/wek/inputs", rate: 0.1, post: 0); //rate arg adjusts rate OSC messages are output (0.04 or about 25 times/sec is default)
+~transmit = ~streamFeatures.value(~busSum_ldns_mfcc, ~oscOut_weki, "/wek/inputs", rate: 0.5, post: 1); //rate arg adjusts rate OSC messages are output (0.04 or about 25 times/sec is default)
 SystemClock.play(~transmit);
 )
 ( //STOP transmitting (NOTE:  evaluate this chunk before transmitting other feature sets)
@@ -840,7 +841,7 @@ SystemClock.play(~transmit);
 
 (//TRANSMIT LOUDNESS, SPECTRAL FLATNESS, AND SPECTRAL CENTROID - (3 features)
 ~busSum_ldns_sFlat_sCent = ~sumFunc_xin.value( [~bus_loudness, ~bus_specFlat, ~bus_specCent] );
-~transmit = ~streamFeatures.value(~busSum_ldns_sFlat_sCent, ~oscOut_weki, "/wek/inputs", 0.1);
+~transmit = ~streamFeatures.value(~busSum_ldns_sFlat_sCent, ~oscOut_weki, "/wek/inputs", 0.1, 1);
 SystemClock.play(~transmit);
 )
 ( //STOP transmitting
@@ -873,8 +874,8 @@ SystemClock.play(~transmit);
 )
 
 (//TRANSMIT FEATURES - Loudness, Flatness, Pitch[2]  (variable size feature bus set)
-~busSum_xin = ~sumFunc_xin.value([~bus_loudness, ~bus_specFlat, ~bus_pitch]); //input desired feature busses in array to monitor (separate w/ comma)
-~transmit = ~streamFeatures.value(~busSum_xin, ~oscOut_weki, "/wek/inputs", 0.1);
+~busSum_xin = ~sumFunc_xin.value([~bus_loudness, ~bus_specFlat, ~bus_pitch2]); //input desired feature busses in array to monitor (separate w/ comma)
+~transmit = ~streamFeatures.value(~busSum_xin, ~oscOut_weki, "/wek/inputs", 0.1, 1);
 SystemClock.play(~transmit);
 )
 ( //STOP transmitting

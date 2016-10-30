@@ -155,7 +155,7 @@ SynthDef.new(\onsets, {
 	sigIn = In.ar(input);
 	fft = FFT(LocalBuf(1024), sigIn, wintype: 1);
 	onsets = Onsets.kr(fft, threshold, odtype, reltime, floor);
-	trigger = EnvGen.kr(Env([1, 1, 0], [0, trigtime], curve: \hold), onsets); //after onset is detected, send trigger value of '1'  for 'trigtime' seconds to control bus
+	trigger = Trig1.kr(onsets, trigtime);  //if onset detected, send output 1 for trigtime seconds to control bus
 	//trigger.poll(10, label: 'trig'); //uncomment this to monitor trigger val constantly
 	Out.kr(outBus, trigger);
 }).add;
